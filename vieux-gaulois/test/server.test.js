@@ -30,6 +30,14 @@ test('API: login con RUT y 4 dígitos, acciones con permisos y bloqueo por inten
   const tok = login.body.token;
   assert.strictEqual(login.body.view.yo, jug);
 
+  const dir = await pedir('/api/login', { rut: 'vieux', clave: 'vieuxg1234' });
+  assert.strictEqual(dir.status, 200);
+  assert.strictEqual(dir.body.view.yo, 'usr:vieux');
+  const creado = await pedir('/api/action', { type: 'staff.crear', payload: { usuario: 'profe', clave: 'profe2026', nombre: 'Profe', rol: 'entrenador' } }, dir.body.token);
+  assert.strictEqual(creado.status, 200);
+  assert.strictEqual((await pedir('/api/login', { rut: 'profe', clave: 'profe2026' })).status, 200);
+  assert.ok(!fs.readFileSync(process.env.DATA_FILE, 'utf8').includes('profe2026'));
+
   const prohibido = await pedir('/api/action', { type: 'pago.marcar', payload: { rut: jug, anio: 2026, mes: 1, pagado: true } }, tok);
   assert.strictEqual(prohibido.status, 400);
   assert.match(prohibido.body.error, /permiso/);

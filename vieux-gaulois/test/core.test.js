@@ -6,8 +6,8 @@ const C = require('../public/core.js');
 
 const sha256 = async (s) => crypto.createHash('sha256').update(s).digest('hex');
 const ANIO = new Date().getFullYear();
-const DIR = '11111111-1';
-const ENT = C.rutDesdeCuerpo(12222222);
+const DIR = 'usr:vieux';
+const ENT = 'usr:jorge';
 const JUG = C.rutDesdeCuerpo(20123456);
 
 test('RUT: valida dígito verificador y normaliza formatos', () => {
@@ -29,6 +29,38 @@ test('clave inicial = primeros 4 dígitos del RUT', async () => {
   assert.ok(await C.verificarClave(u, 'nueva123', sha256));
   C.applyAction(db, DIR, { type: 'clave.resetear', payload: { rut: JUG } });
   assert.ok(await C.verificarClave(u, '2012', sha256));
+});
+
+test('directiva y entrenadores entran con usuario y clave; jugadores con RUT', async () => {
+  const db = C.dbEjemplo();
+  const buscar = (id) => db.usuarios.find((u) => u.rut === C.idDeIngreso(id));
+  assert.ok(await C.verificarClave(buscar('Vieux'), 'vieuxg1234', sha256));
+  assert.ok(!(await C.verificarClave(buscar('vieux'), 'vieu', sha256)));
+  assert.ok(await C.verificarClave(buscar('jorge'), 'jorge1234', sha256));
+  // Tomás: jugador con su RUT y entrenador con su usuario.
+  assert.strictEqual(buscar('20.123.456-5').rol, 'jugador');
+  assert.ok(await C.verificarClave(buscar('20.123.456-5'), '2012', sha256));
+  assert.strictEqual(buscar('tomas').rol, 'entrenador');
+  assert.strictEqual(buscar('tomas').jugadorRut, JUG);
+  // La base vacía también trae la cuenta vieux.
+  assert.ok(await C.verificarClave(C.dbVacia().usuarios.find((u) => u.rut === 'usr:vieux'), 'vieuxg1234', sha256));
+});
+
+test('directiva crea entrenador con usuario y clave definidos', async () => {
+  const db = C.dbEjemplo();
+  const crear = async (actor, payload) => C.applyAction(db, actor, await C.prepararAccion({ type: 'staff.crear', payload }, sha256));
+  await crear(DIR, { usuario: 'Camila.F', clave: 'balon2026', nombre: 'Camila Fuentes', rol: 'entrenador', jugadorRut: C.rutDesdeCuerpo(18765432) });
+  const u = db.usuarios.find((x) => x.rut === 'usr:camila.f');
+  assert.ok(await C.verificarClave(u, 'balon2026', sha256));
+  assert.strictEqual(u.jugadorRut, C.rutDesdeCuerpo(18765432));
+  await assert.rejects(crear(DIR, { usuario: 'camila.f', clave: 'otra1234', nombre: 'X', rol: 'entrenador' }), /Ya existe/);
+  await assert.rejects(crear(DIR, { usuario: '1abc', clave: 'otra1234', nombre: 'X', rol: 'entrenador' }), /Usuario no válido/);
+  await assert.rejects(crear(ENT, { usuario: 'nuevo', clave: 'otra1234', nombre: 'X', rol: 'directiva' }), /permiso/);
+  // Un hash enviado desde fuera se ignora.
+  await assert.rejects(crear(DIR, { usuario: 'hacker', claveHash: 'abc', nombre: 'X', rol: 'directiva' }), /clave/);
+  C.applyAction(db, DIR, await C.prepararAccion({ type: 'clave.definir', payload: { rut: 'usr:camila.f', clave: 'nueva999' } }, sha256));
+  assert.ok(await C.verificarClave(u, 'nueva999', sha256));
+  assert.throws(() => C.applyAction(db, DIR, { type: 'clave.resetear', payload: { rut: 'usr:camila.f' } }), /Jugador no encontrado/);
 });
 
 test('edad', () => {

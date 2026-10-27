@@ -29,13 +29,8 @@ function cargar() {
     return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   } catch (e) {
     if (e.code !== 'ENOENT') throw e;
+    // Ambas parten con la cuenta de directiva "vieux" (clave vieuxg1234).
     const db = process.env.SIN_DATOS_EJEMPLO ? core.dbVacia() : core.dbEjemplo();
-    if (process.env.SIN_DATOS_EJEMPLO) {
-      // Primera cuenta de directiva, definida por variables de entorno.
-      const rut = core.normalizarRut(process.env.ADMIN_RUT || '');
-      if (!rut) throw new Error('Con SIN_DATOS_EJEMPLO debes definir ADMIN_RUT (RUT de la primera cuenta de directiva)');
-      db.usuarios.push({ rut, rol: 'directiva', nombre: process.env.ADMIN_NOMBRE || 'Directiva', activo: true, creado: core.hoyISO() });
-    }
     guardar(db);
     return db;
   }
@@ -111,14 +106,14 @@ function estatico(req, res) {
 async function api(req, res, ruta) {
   if (ruta === '/api/ping') {
     // demo = todavía existe la cuenta de ejemplo con su clave inicial: se muestran las cuentas de prueba en el login.
-    const demo = db.usuarios.some((u) => u.rut === '11111111-1' && !u.claveHash && u.activo !== false);
+    const demo = db.usuarios.some((u) => u.rut === '20123456-5' && !u.claveHash && u.activo !== false);
     return json(res, 200, { ok: true, club: db.config.club, demo });
   }
 
   if (ruta === '/api/login' && req.method === 'POST') {
     const { rut, clave } = await leerCuerpo(req);
-    const r = core.normalizarRut(rut);
-    if (!r) return json(res, 400, { error: 'RUT no válido' });
+    const r = core.idDeIngreso(rut);
+    if (!r) return json(res, 400, { error: 'Ingresa tu RUT (jugadores) o tu usuario (entrenadores y directiva)' });
     const bloqueo = intentos.get(r);
     if (bloqueo && bloqueo.hasta > Date.now()) {
       return json(res, 429, { error: 'Demasiados intentos. Espera ' + BLOQUEO_MIN + ' minutos.' });
@@ -128,7 +123,7 @@ async function api(req, res, ruta) {
       // Si un bloqueo anterior ya venció, el conteo parte de cero.
       const n = (!bloqueo || (bloqueo.hasta && bloqueo.hasta <= Date.now()) ? 0 : bloqueo.n) + 1;
       intentos.set(r, { n, hasta: n >= MAX_INTENTOS ? Date.now() + BLOQUEO_MIN * 60e3 : 0 });
-      return json(res, 401, { error: 'RUT o clave incorrectos' });
+      return json(res, 401, { error: 'Usuario o clave incorrectos' });
     }
     intentos.delete(r);
     return json(res, 200, { token: crearSesion(r), view: core.viewFor(db, r) });
@@ -154,7 +149,7 @@ async function api(req, res, ruta) {
   }
 
   if (ruta === '/api/action' && req.method === 'POST') {
-    const accion = await leerCuerpo(req);
+    const accion = await core.prepararAccion(await leerCuerpo(req), sha256);
     // Se aplica sobre una copia: si falla, la base no queda a medias.
     const copia = core.clone(db);
     core.applyAction(copia, s.rut, accion);

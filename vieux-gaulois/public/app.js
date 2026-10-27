@@ -4,6 +4,8 @@
   const C = window.VGCore;
   const ANIO = new Date().getFullYear();
   const HOY = C.hoyISO();
+  // En la versión de un solo archivo el escudo viene incrustado (ver scripts/build-demo.js).
+  const ESCUDO = window.VG_ESCUDO || 'escudo.png';
 
   // ---------- Utilidades ----------
   const $ = (s, el) => (el || document).querySelector(s);
@@ -20,10 +22,45 @@
       const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto));
       return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
     }
-    // Respaldo para modo demo abierto como archivo local (sin contexto seguro).
-    let a = 0x811c9dc5, b = 0x01000193;
-    for (let i = 0; i < texto.length; i++) { a = Math.imul(a ^ texto.charCodeAt(i), 16777619); b = Math.imul(b + texto.charCodeAt(i), 2246822519); }
-    return (a >>> 0).toString(16) + (b >>> 0).toString(16);
+    return sha256Js(texto);
+  }
+
+  // SHA-256 en JavaScript puro, para navegadores sin crypto.subtle (página abierta sin HTTPS).
+  function sha256Js(texto) {
+    const K = [];
+    let n = 2;
+    while (K.length < 64) {
+      let primo = true;
+      for (let d = 2; d * d <= n; d++) if (n % d === 0) { primo = false; break; }
+      if (primo) K.push((Math.pow(n, 1 / 3) % 1) * 4294967296 | 0);
+      n++;
+    }
+    const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    const bytes = Array.from(new TextEncoder().encode(texto));
+    const bits = bytes.length * 8;
+    bytes.push(0x80);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    for (let i = 7; i >= 0; i--) bytes.push(i >= 4 ? 0 : (bits >>> (i * 8)) & 0xff);
+    const rot = (x, k) => (x >>> k) | (x << (32 - k));
+    for (let o = 0; o < bytes.length; o += 64) {
+      const W = [];
+      for (let i = 0; i < 64; i++) {
+        if (i < 16) W[i] = (bytes[o + i * 4] << 24) | (bytes[o + i * 4 + 1] << 16) | (bytes[o + i * 4 + 2] << 8) | bytes[o + i * 4 + 3];
+        else {
+          const s0 = rot(W[i - 15], 7) ^ rot(W[i - 15], 18) ^ (W[i - 15] >>> 3);
+          const s1 = rot(W[i - 2], 17) ^ rot(W[i - 2], 19) ^ (W[i - 2] >>> 10);
+          W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
+        }
+      }
+      let [a, b, c, d, e, f, g, hh] = H;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (hh + (rot(e, 6) ^ rot(e, 11) ^ rot(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + W[i]) | 0;
+        const t2 = ((rot(a, 2) ^ rot(a, 13) ^ rot(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      [a, b, c, d, e, f, g, hh].forEach((v, i) => { H[i] = (H[i] + v) | 0; });
+    }
+    return H.map((v) => (v >>> 0).toString(16).padStart(8, '0')).join('');
   }
 
   // ---------- Estado ----------
@@ -62,21 +99,21 @@
     db: null, rut: leerLS('vg_rut'),
     cargar() {
       try { this.db = JSON.parse(leerLS('vg_db')); } catch (e) { this.db = null; }
-      if (!this.db || !this.db.usuarios) { this.db = C.dbEjemplo(); this.guardar(); }
+      if (!this.db || !this.db.usuarios || this.db.version !== C.dbVacia().version) { this.db = C.dbEjemplo(); this.guardar(); this.rut = null; }
     },
     guardar() { guardarLS('vg_db', JSON.stringify(this.db)); },
     async login(rut, clave) {
-      const r = C.normalizarRut(rut);
-      if (!r) throw new ErrorApi('RUT no válido');
+      const r = C.idDeIngreso(rut);
+      if (!r) throw new ErrorApi('Ingresa tu RUT (jugadores) o tu usuario (entrenadores y directiva)');
       const u = this.db.usuarios.find((x) => x.rut === r);
-      if (!(await C.verificarClave(u, clave, sha256))) throw new ErrorApi('RUT o clave incorrectos');
+      if (!(await C.verificarClave(u, clave, sha256))) throw new ErrorApi('Usuario o clave incorrectos');
       this.rut = r; guardarLS('vg_rut', r);
       return C.viewFor(this.db, r);
     },
     async estado() { return this.rut ? C.viewFor(this.db, this.rut) : null; },
     async accion(type, payload) {
       const copia = C.clone(this.db);
-      C.applyAction(copia, this.rut, { type, payload });
+      C.applyAction(copia, this.rut, await C.prepararAccion({ type, payload }, sha256));
       this.db = copia; this.guardar();
       return C.viewFor(this.db, this.rut);
     },
@@ -115,6 +152,7 @@
   const jugadores = (todos) => S.view.usuarios.filter((u) => u.rol === 'jugador' && (todos || u.activo !== false)).sort(ordenar);
   const filtrarCat = (lista, campo) => (S.filtroCat ? lista.filter((x) => (campo ? x[campo] : x.categoria) === S.filtroCat) : lista);
   const hab = (rut) => C.habilitado(S.view, rut, ANIO);
+  const cuentaEntrenador = (rutJugador) => S.view.usuarios.find((u) => u.rol !== 'jugador' && u.activo !== false && u.jugadorRut === rutJugador);
   const lesionesActivas = (rut) => S.view.lesiones.filter((l) => l.rut === rut && l.estado === 'activa');
   const sinVer = () => S.view.lesiones.filter((l) => !l.vistoPor.includes(S.view.yo));
   const porFecha = (a, b) => (a.fecha + (a.hora || '')).localeCompare(b.fecha + (b.hora || ''));
@@ -177,19 +215,19 @@
 
   // ---------- Login ----------
   function vistaLogin() {
-    const demo = S.demo ? '<div class="demo"><b>Cuentas de prueba</b> (clave = 4 primeros dígitos del RUT)<table>' +
-      [['Directiva', '11111111-1'], ['Entrenador', '12222222-' + C.dvRut(12222222)], ['Jugador', '20123456-' + C.dvRut(20123456)]]
-        .map(([r, rut]) => '<tr><td>' + r + '</td><td><button type="button" data-act="rellenarDemo" data-rut="' + rut + '">' + C.formatearRut(rut) + '</button></td><td>' + C.claveInicial(rut) + '</td></tr>').join('') +
+    const demo = S.demo ? '<div class="demo"><b>Cuentas de prueba</b> (toca para rellenar)<table>' +
+      [['Directiva', 'vieux', 'vieuxg1234'], ['Entrenador', 'jorge', 'jorge1234'], ['Jugador', '20.123.456-5', '2012'], ['Entrenador y jugador', 'tomas', 'tomas1234']]
+        .map(([r, u, c]) => '<tr><td>' + r + '</td><td><button type="button" data-act="rellenarDemo" data-usuario="' + u + '" data-clave="' + c + '">' + u + '</button></td><td>' + c + '</td></tr>').join('') +
       '</table></div>' : '';
     return '<div class="login"><div class="login-caja">' +
-      '<img src="escudo.png" alt="Escudo Vieux Gaulois">' +
+      '<img src="' + ESCUDO + '" alt="Escudo Vieux Gaulois">' +
       '<h1>VIEUX GAULOIS</h1><div class="lema">HANDBALL</div>' +
       '<form id="form-login" autocomplete="on">' +
-      campo('RUT', '<input name="rut" id="login-rut" inputmode="text" autocomplete="username" placeholder="12.345.678-9" required>') +
-      campo('Clave', '<input name="clave" type="password" inputmode="numeric" autocomplete="current-password" placeholder="4 primeros dígitos del RUT" required>') +
+      campo('RUT o usuario', '<input name="rut" id="login-rut" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="RUT o usuario" required>') +
+      campo('Clave', '<input name="clave" type="password" autocomplete="current-password" placeholder="Clave" required>') +
       '<div class="error" id="login-error"></div>' +
       '<button class="btn primario ancho">Ingresar</button></form>' +
-      '<p class="suave" style="font-size:.8rem;margin-top:12px">Tu clave inicial son los <b>primeros 4 dígitos de tu RUT</b>.</p>' +
+      '<p class="suave" style="font-size:.8rem;margin-top:12px"><b>Jugadores:</b> RUT y clave = primeros 4 dígitos del RUT.<br><b>Entrenadores y directiva:</b> usuario y clave entregados por la directiva.</p>' +
       demo + '</div></div>';
   }
 
@@ -207,7 +245,7 @@
       return '<button data-act="tab" data-tab="' + id + '" class="' + (S.tab === id ? 'activa' : '') + '">' + txt + (n ? '<span class="punto">' + n + '</span>' : '') + '</button>';
     }).join('');
     return (S.modo === 'local' ? '<div class="modo-demo">Modo demo: los datos se guardan sólo en este navegador. Para uso real del club inicia el servidor (ver README).</div>' : '') +
-      '<header class="cabecera"><img src="escudo.png" alt=""><div class="marca"><b>VIEUX GAULOIS</b><small>HANDBALL</small></div>' +
+      '<header class="cabecera"><img src="' + ESCUDO + '" alt=""><div class="marca"><b>VIEUX GAULOIS</b><small>HANDBALL</small></div>' +
       '<div class="usuario"><span>' + h(u.nombre) + '<small>' + h(u.cargo || u.rol) + '</small></span>' +
       '<button class="btn mini btn-claro" data-act="clave">Clave</button><button class="btn mini btn-claro" data-act="salir">Salir</button></div></header>' +
       '<nav class="pestanas">' + tabs + '</nav><main>' + contenido + '</main>';
@@ -264,7 +302,7 @@
       const deuda = esDir() ? C.mesesAdeudados(S.view, j.rut, ANIO).filter((m) => estadoMes(j.rut, ANIO, m) === 'vencido').length : 0;
       return '<tr class="clic" data-act="verJugador" data-rut="' + j.rut + '">' +
         '<td>' + camiseta(j) + '</td>' +
-        '<td><div class="nombre">' + h(j.nombre) + (j.activo === false ? ' ' + insignia('Inactivo') : '') + '</div><small>' + h(C.formatearRut(j.rut)) + '</small></td>' +
+        '<td><div class="nombre">' + h(j.nombre) + (j.activo === false ? ' ' + insignia('Inactivo') : '') + (cuentaEntrenador(j.rut) ? ' ' + insignia('Entrenador', 'oro') : '') + '</div><small>' + h(C.formatearRut(j.rut)) + '</small></td>' +
         '<td class="ocultar-movil">' + h(j.categoria) + '</td>' +
         '<td class="num ocultar-movil">' + (C.edad(j.fechaNac) == null ? '–' : C.edad(j.fechaNac)) + '</td>' +
         '<td class="ocultar-movil">' + h(j.posicion || '–') + '</td>' +
@@ -554,10 +592,13 @@
       '<button class="btn primario">Guardar precios</button></form></section>' +
       '<section class="tarjeta"><h2>Categorías</h2><p class="suave" style="font-size:.85rem;margin-bottom:12px">Una por línea.</p>' +
       '<form data-form="categorias"><textarea class="entrada" name="categorias" rows="8">' + h(cfg.categorias.join('\n')) + '</textarea><div style="margin-top:12px"><button class="btn primario">Guardar categorías</button></div></form></section>' +
-      '<section class="tarjeta"><div class="tarjeta-cab"><h2>Directiva y entrenadores</h2><button class="btn primario" data-act="nuevoStaff">+ Agregar</button></div><ul class="lista">' +
-      staff.map((u) => '<li><div class="crece"><b>' + h(u.nombre) + '</b><small>' + h(C.formatearRut(u.rut)) + ' · ' + h(u.cargo || u.rol) + (u.claveInicial ? ' · clave inicial' : '') + '</small></div>' +
+      '<section class="tarjeta"><div class="tarjeta-cab"><h2>Directiva y entrenadores</h2><button class="btn primario" data-act="nuevoStaff">+ Agregar</button></div><ul class="lista apilar">' +
+      staff.map((u) => {
+        const j = u.jugadorRut && usuario(u.jugadorRut);
+        return '<li><div class="crece"><b>' + h(u.nombre) + '</b><small>Usuario: <b>' + h(u.usuario || u.rut) + '</b> · ' + h(u.cargo || u.rol) + (j ? ' · también juega en ' + h(j.categoria) : '') + '</small></div>' +
         insignia(u.rol === 'directiva' ? 'Directiva' : 'Entrenador', u.rol === 'directiva' ? 'oro' : '') + (u.activo === false ? insignia('Inactivo', 'mal') : '') +
-        (u.rut !== S.view.yo ? '<button class="btn mini" data-act="resetClave" data-rut="' + u.rut + '">Clave</button><button class="btn mini peligro" data-act="activoStaff" data-rut="' + u.rut + '" data-activo="' + (u.activo === false ? '1' : '') + '">' + (u.activo === false ? 'Activar' : 'Desactivar') + '</button>' : '') + '</li>').join('') +
+        (u.rut !== S.view.yo ? '<button class="btn mini" data-act="definirClave" data-rut="' + u.rut + '">Clave</button><button class="btn mini peligro" data-act="activoStaff" data-rut="' + u.rut + '" data-activo="' + (u.activo === false ? '1' : '') + '">' + (u.activo === false ? 'Activar' : 'Desactivar') + '</button>' : '') + '</li>';
+      }).join('') +
       '</ul></section>' +
       (S.modo === 'local' ? '<section class="tarjeta"><h2>Datos de demostración</h2><p class="suave" style="font-size:.85rem;margin-bottom:12px">Borra los cambios hechos en este navegador y vuelve a los datos de ejemplo.</p><button class="btn peligro" data-act="reiniciarDemo">Reiniciar demo</button></section>' : '') +
       '</div>';
@@ -613,6 +654,7 @@
     }).join('') + '</ul>' : vacio('No hay partidos próximos para tu categoría.');
 
     return '<div class="pila">' +
+      (cuentaEntrenador(j.rut) ? '<div class="aviso info">También eres <b>' + h(cuentaEntrenador(j.rut).cargo || 'entrenador') + '</b>. Para tu perfil de entrenador sal y entra con tu usuario <b>' + h(cuentaEntrenador(j.rut).rut.replace('usr:', '')) + '</b>.</div>' : '') +
       (j.claveInicial ? '<div class="aviso">Estás usando tu clave inicial (4 primeros dígitos del RUT). Te recomendamos <button class="btn mini" data-act="clave">cambiarla</button></div>' : '') +
       '<section class="perfil"><div class="fila"><div class="numero">' + (j.numero != null ? h(j.numero) : '–') + '</div><div style="flex:1;min-width:0"><h1>' + h(j.nombre) + '</h1>' +
       '<div class="fila" style="gap:6px;margin-top:6px">' + (fed ? insignia('Habilitado para jugar', 'ok') : insignia('No habilitado: federativo pendiente', 'mal')) + '</div></div></div>' +
@@ -679,7 +721,7 @@
     salir: async () => { await B().salir(); S.view = null; S.tab = null; render(); },
     rellenarDemo: (d) => {
       const f = $('#form-login');
-      f.rut.value = C.formatearRut(d.rut); f.clave.value = C.claveInicial(d.rut);
+      f.rut.value = d.usuario; f.clave.value = d.clave;
     },
     clave: () => abrirModal('Cambiar clave', '<form id="form-modal">' +
       campo('Clave actual', '<input name="actual" type="password" required autocomplete="current-password">') +
@@ -778,11 +820,20 @@
 
     // Staff
     nuevoStaff: () => abrirModal('Agregar directiva o entrenador', '<form id="form-modal">' +
-      campo('RUT', input('rut', '', 'required placeholder="12.345.678-9"')) + campo('Nombre', input('nombre', '', 'required')) +
-      '<div class="campos">' + campo('Rol', '<select name="rol"><option value="entrenador">Entrenador</option><option value="directiva">Directiva</option></select>') +
+      campo('Nombre', input('nombre', '', 'required')) +
+      '<div class="campos">' + campo('Usuario', input('usuario', '', 'required autocapitalize="none" autocomplete="off" placeholder="Ej: jperez" pattern="[A-Za-z][A-Za-z0-9._\\-]{2,29}" title="3 a 30 caracteres, empieza con letra, sin espacios"')) +
+      campo('Clave', input('clave', '', 'required minlength="4" autocomplete="new-password"')) +
+      campo('Rol', '<select name="rol"><option value="entrenador">Entrenador</option><option value="directiva">Directiva</option></select>') +
       campo('Cargo', input('cargo', '', 'placeholder="Ej: Tesorero, Entrenador Juvenil"')) + campo('Teléfono', input('telefono', '', 'type="tel"')) + campo('Email', input('email', '', 'type="email"')) + '</div>' +
-      '<p class="suave" style="font-size:.82rem">Ingresa con su RUT y los primeros 4 dígitos como clave.</p>' + pie('Agregar') + '</form>',
-    (o) => accion('staff.crear', o, 'Usuario agregado')),
+      campo('¿También es jugador del club?', '<select name="jugadorRut"><option value="">No</option>' + jugadores().map((j) => '<option value="' + j.rut + '">' + h(j.nombre) + ' (' + h(j.categoria) + ')</option>').join('') + '</select>') +
+      '<p class="suave" style="font-size:.82rem">Entra con este usuario y clave. Si también es jugador, su perfil de jugador sigue entrando con su RUT.</p>' + pie('Agregar') + '</form>',
+    (o) => accion('staff.crear', o, 'Usuario "' + o.usuario.trim().toLowerCase() + '" creado')),
+    definirClave: (d) => {
+      const u = usuario(d.rut);
+      abrirModal('Nueva clave para ' + u.nombre, '<form id="form-modal"><p class="suave">Usuario: <b>' + h(u.usuario) + '</b></p>' +
+        campo('Nueva clave', input('clave', '', 'required minlength="4" autocomplete="new-password"')) + pie('Guardar clave') + '</form>',
+      (o) => accion('clave.definir', { rut: u.rut, clave: o.clave }, 'Clave actualizada'));
+    },
     activoStaff: (d) => { if (confirm(d.activo ? '¿Activar esta cuenta?' : '¿Desactivar esta cuenta? No podrá ingresar.')) accion('staff.activo', { rut: d.rut, activo: !!d.activo }, 'Listo'); },
     reiniciarDemo: () => {
       if (!confirm('¿Borrar todos los cambios y volver a los datos de ejemplo?')) return;
@@ -828,6 +879,8 @@
   document.addEventListener('input', (ev) => {
     if (ev.target.dataset && ev.target.dataset.cambio === 'busqueda') { S.busqueda = ev.target.value; render(); }
     if (ev.target.id === 'login-rut' || (ev.target.name === 'rut' && ev.target.form && ev.target.form.id === 'form-modal' && ev.target.type !== 'hidden')) {
+      // En el login también se escriben usuarios: sólo se da formato si parte con un número.
+      if (!/^\d/.test(ev.target.value.trim())) return;
       const limpio = C.limpiarRut(ev.target.value).slice(0, 9);
       ev.target.value = limpio.length > 1 ? C.formatearRut(limpio.slice(0, -1) + '-' + limpio.slice(-1)) : limpio;
     }
@@ -873,6 +926,8 @@
   // ---------- Inicio ----------
   async function iniciar() {
     try {
+      // El HTML de un solo archivo (o abierto con doble clic) no tiene servidor: va directo a modo demo.
+      if (window.VG_SOLO_DEMO || location.protocol === 'file:') throw new Error('sin servidor');
       const r = await fetch('api/ping', { cache: 'no-store' });
       const d = r.ok ? await r.json() : null;
       if (!d || !d.ok) throw new Error('sin servidor');

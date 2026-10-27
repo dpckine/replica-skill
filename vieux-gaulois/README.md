@@ -4,10 +4,16 @@ App de gestión del club con tres accesos: **Directiva**, **Entrenadores** y **J
 
 ## Ingreso
 
-- **Usuario:** RUT (con o sin puntos y guion).
-- **Clave:** los **primeros 4 dígitos del RUT** (ej. RUT 20.123.456-5, clave `2012`).
-- Cada usuario puede cambiar su clave con el botón "Clave". La directiva puede restablecerla.
-- Tras 5 intentos fallidos el RUT queda bloqueado 5 minutos.
+- **Jugadores:** usuario = RUT (con o sin puntos y guion), clave = **primeros 4 dígitos del RUT**
+  (ej. RUT 20.123.456-5, clave `2012`). La directiva puede restablecerla a esos 4 dígitos.
+- **Entrenadores y directiva:** **usuario y clave definidos por la directiva** (Ajustes).
+  La directiva puede cambiarles la clave cuando quiera.
+- **Cuenta inicial de directiva:** usuario `vieux`, clave `vieuxg1234`. Cámbiala con el botón "Clave".
+- **Jugadores que también son entrenadores:** siguen entrando con su RUT a su perfil de jugador,
+  y con su usuario y clave a su perfil de entrenador. Al crear la cuenta de entrenador se marca
+  "¿También es jugador del club?" para dejarlos vinculados.
+- Cada usuario puede cambiar su clave con el botón "Clave".
+- Tras 5 intentos fallidos la cuenta queda bloqueada 5 minutos.
 
 ## Qué puede hacer cada rol
 
@@ -37,23 +43,25 @@ Requiere Node.js 18 o superior. No hay dependencias que instalar.
 cd vieux-gaulois
 npm start          # http://localhost:3000
 npm test           # pruebas
+npm run demo       # genera vieux-gaulois-demo.html (todo en un archivo, para probar sin servidor)
 ```
 
 La primera vez se crea `data/db.json` con datos de ejemplo:
 
-| Rol | RUT | Clave |
+| Rol | Usuario | Clave |
 |---|---|---|
-| Directiva | 11.111.111-1 | 1111 |
-| Entrenador | 12.222.222-5 | 1222 |
+| Directiva | vieux | vieuxg1234 |
+| Entrenador | jorge | jorge1234 |
 | Jugador | 20.123.456-5 | 2012 |
+| Entrenador que también juega | tomas | tomas1234 |
 
 ### Empezar con el club real (sin datos de ejemplo)
 
 ```bash
-SIN_DATOS_EJEMPLO=1 ADMIN_RUT=12.345.678-5 ADMIN_NOMBRE="Presidente" npm start
+SIN_DATOS_EJEMPLO=1 npm start
 ```
 
-Crea una base vacía con una sola cuenta de directiva. Desde ahí se agregan entrenadores
+Crea una base vacía con una sola cuenta de directiva (`vieux` / `vieuxg1234`). Desde ahí se agregan entrenadores
 (Ajustes) y jugadores (Jugadores).
 
 Variables: `PORT` (puerto, 3000 por defecto) y `DATA_FILE` (ruta del archivo de datos).
@@ -61,7 +69,8 @@ Respalda `data/db.json` con regularidad: ahí está toda la información del clu
 
 ### Modo demo
 
-Si se abre `public/index.html` sin el servidor (o en un hosting estático), la app funciona
+`vieux-gaulois-demo.html` es la app completa en un solo archivo: se abre con doble clic.
+Lo mismo pasa si se abre `public/index.html` sin el servidor: la app funciona
 en **modo demo**: los datos quedan sólo en ese navegador. Sirve para mostrarla, no para
 uso real, porque cada teléfono vería datos distintos.
 

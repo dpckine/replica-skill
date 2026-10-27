@@ -54,6 +54,32 @@
     return cuerpo + '-' + dvRut(cuerpo);
   }
 
+  // ---------- Ingreso ----------
+  // Jugadores ingresan con su RUT. Directiva y entrenadores con un usuario y una clave
+  // definidos por la directiva; internamente su identificador es "usr:<usuario>".
+
+  function normalizarUsuario(u) {
+    const s = String(u || '').trim().toLowerCase();
+    return /^[a-z][a-z0-9._-]{2,29}$/.test(s) ? s : null;
+  }
+
+  function idDeIngreso(identificador) {
+    const r = normalizarRut(identificador);
+    if (r) return r;
+    const u = normalizarUsuario(identificador);
+    return u ? 'usr:' + u : null;
+  }
+
+  function textoHash(id, clave) {
+    return 'vieux-gaulois|' + id + '|' + clave;
+  }
+
+  // Cuentas que existen desde el inicio (clave guardada como hash SHA-256).
+  const CUENTA_DIRECTIVA = {
+    rut: 'usr:vieux', usuario: 'vieux', rol: 'directiva', nombre: 'Directiva Vieux Gaulois', cargo: 'Directiva', activo: true,
+    claveHash: 'a6618b56c12983a6847705ed03e0f70a7d0ee37318b774ffae2d8ec0032dd2d8', // vieuxg1234
+  };
+
   // ---------- Fechas ----------
 
   function hoyISO(d) {
@@ -136,7 +162,7 @@
   function dbVacia() {
     const anio = new Date().getFullYear();
     return {
-      version: 1,
+      version: 2,
       config: {
         club: 'Vieux Gaulois Handball',
         temporada: anio,
@@ -146,7 +172,7 @@
         mesesCobro: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
         diaVencimiento: 10,
       },
-      usuarios: [],
+      usuarios: [Object.assign({ creado: hoyISO() }, CUENTA_DIRECTIVA)],
       pagos: {},
       federativo: {},
       entrenamientos: [],
@@ -166,8 +192,15 @@
       db.usuarios.push(u);
       return u;
     };
-    add(11111111, { nombre: 'María González', rol: 'directiva', cargo: 'Presidenta', telefono: '+56 9 1111 1111' });
-    add(12222222, { nombre: 'Jorge Pérez', rol: 'entrenador', cargo: 'Entrenador Adulto', telefono: '+56 9 2222 2222' });
+    db.usuarios.push({
+      rut: 'usr:jorge', usuario: 'jorge', rol: 'entrenador', nombre: 'Jorge Pérez', cargo: 'Entrenador Adulto', telefono: '+56 9 2222 2222', activo: true, creado: hoy,
+      claveHash: '87f28f30a50033150d34790d77b007cfd5f43dab18eb5f530ca6174592790396', // jorge1234
+    });
+    // Tomás juega en Adulto (entra con su RUT) y además entrena a la Juvenil (entra con usuario "tomas").
+    db.usuarios.push({
+      rut: 'usr:tomas', usuario: 'tomas', rol: 'entrenador', nombre: 'Tomás Rojas', cargo: 'Entrenador Juvenil', activo: true, creado: hoy,
+      jugadorRut: rutDesdeCuerpo(20123456), claveHash: 'd355c072d67c4714eb6120152e17fad62ced7f0190ad54dce3532321967ea1cb', // tomas1234
+    });
     const jugadores = [
       add(20123456, { nombre: 'Tomás Rojas', rol: 'jugador', fechaNac: '2001-04-12', categoria: 'Adulto Varones', numero: 7, posicion: 'Central', telefono: '+56 9 3333 3333' }),
       add(19876543, { nombre: 'Diego Muñoz', rol: 'jugador', fechaNac: '1998-09-03', categoria: 'Adulto Varones', numero: 1, posicion: 'Arquero' }),
@@ -365,13 +398,27 @@
       // ----- Staff (directiva / entrenadores) -----
       case 'staff.crear': {
         exigir(esDir);
-        const rut = normalizarRut(p.rut);
-        if (!rut) throw err('RUT no válido');
-        if (buscarUsuario(db, rut)) throw err('Ya existe un usuario con ese RUT');
+        const usuario = normalizarUsuario(p.usuario);
+        if (!usuario) throw err('Usuario no válido: de 3 a 30 caracteres, empieza con letra, sin espacios');
+        const id = 'usr:' + usuario;
+        if (buscarUsuario(db, id)) throw err('Ya existe el usuario "' + usuario + '"');
         if (!['directiva', 'entrenador'].includes(p.rol)) throw err('Rol no válido');
         const nombre = texto(p.nombre, 80);
         if (!nombre) throw err('El nombre es obligatorio');
-        db.usuarios.push({ rut, rol: p.rol, nombre, cargo: texto(p.cargo, 60), telefono: texto(p.telefono, 30), email: texto(p.email, 80), activo: true, creado: hoyISO() });
+        if (!p.claveHash) throw err('Define una clave de al menos 4 caracteres');
+        const jugadorRut = p.jugadorRut ? buscarJugador(db, p.jugadorRut).rut : '';
+        db.usuarios.push({
+          rut: id, usuario, rol: p.rol, nombre, cargo: texto(p.cargo, 60), telefono: texto(p.telefono, 30), email: texto(p.email, 80),
+          jugadorRut, claveHash: p.claveHash, activo: true, creado: hoyISO(),
+        });
+        break;
+      }
+      case 'clave.definir': {
+        exigir(esDir);
+        const u = buscarUsuario(db, p.rut);
+        if (!u || u.rol === 'jugador') throw err('Usuario no encontrado');
+        if (!p.claveHash) throw err('Define una clave de al menos 4 caracteres');
+        u.claveHash = p.claveHash;
         break;
       }
       case 'staff.activo': {
@@ -384,8 +431,8 @@
       }
       case 'clave.resetear': {
         exigir(esDir);
-        const u = buscarUsuario(db, p.rut);
-        if (!u) throw err('Usuario no encontrado');
+        // Sólo jugadores: su clave vuelve a ser los 4 primeros dígitos del RUT.
+        const u = buscarJugador(db, p.rut);
         delete u.claveHash;
         break;
       }
@@ -616,12 +663,12 @@
   // ---------- Autenticación ----------
 
   async function hashClave(rut, clave, sha256) {
-    return sha256('vieux-gaulois|' + rut + '|' + clave);
+    return sha256(textoHash(rut, clave));
   }
 
   async function verificarClave(usuario, clave, sha256) {
     if (!usuario || usuario.activo === false) return false;
-    if (!usuario.claveHash) return String(clave) === claveInicial(usuario.rut);
+    if (!usuario.claveHash) return usuario.rol === 'jugador' && String(clave) === claveInicial(usuario.rut);
     return (await hashClave(usuario.rut, String(clave), sha256)) === usuario.claveHash;
   }
 
@@ -630,6 +677,22 @@
     if (!(await verificarClave(u, actual, sha256))) throw err('La clave actual no es correcta');
     if (!/^\S{4,40}$/.test(String(nueva || ''))) throw err('La nueva clave debe tener al menos 4 caracteres, sin espacios');
     u.claveHash = await hashClave(rut, String(nueva), sha256);
+  }
+
+  /*
+   * Las acciones que definen una clave llegan con la clave en texto (payload.clave).
+   * Aquí se reemplaza por su hash antes de applyAction; nunca se acepta un hash enviado desde fuera.
+   */
+  async function prepararAccion(action, sha256) {
+    const p = Object.assign({}, (action && action.payload) || {});
+    delete p.claveHash;
+    if (action && (action.type === 'staff.crear' || action.type === 'clave.definir') && p.clave != null) {
+      if (!/^\S{4,40}$/.test(String(p.clave))) throw err('La clave debe tener al menos 4 caracteres, sin espacios');
+      const id = action.type === 'staff.crear' ? 'usr:' + normalizarUsuario(p.usuario) : p.rut;
+      p.claveHash = await hashClave(id, String(p.clave), sha256);
+    }
+    delete p.clave;
+    return { type: action && action.type, payload: p };
   }
 
   // ---------- Vista por rol ----------
@@ -658,7 +721,7 @@
     const yoV = v.usuarios.find((u) => u.rut === rut);
     const nombreDe = (r) => { const u = buscarUsuario(db, r); return u ? { nombre: u.nombre, numero: u.numero } : { nombre: '?', numero: null }; };
     v.usuarios = [yoV].concat(v.usuarios.filter((u) => u.rol !== 'jugador' && u.activo !== false)
-      .map((u) => ({ rut: u.rut, nombre: u.nombre, rol: u.rol, cargo: u.cargo, telefono: u.telefono })));
+      .map((u) => ({ rut: u.rut, nombre: u.nombre, rol: u.rol, cargo: u.cargo, telefono: u.telefono, jugadorRut: u.jugadorRut === rut ? rut : '' })));
     v.pagos = { [rut]: db.pagos[rut] || {} };
     v.federativo = { [rut]: db.federativo[rut] || {} };
     v.lesiones = v.lesiones.filter((l) => l.rut === rut);
@@ -683,9 +746,10 @@
   return {
     MESES, ROLES, POSICIONES,
     limpiarRut, dvRut, normalizarRut, formatearRut, claveInicial, rutDesdeCuerpo,
+    normalizarUsuario, idDeIngreso, textoHash, CUENTA_DIRECTIVA,
     hoyISO, sumarDias, edad, uid, clone,
     cuotaDe, federativoPagado, habilitado, pagoMes, mesesAdeudados, resumenAsistencia, entrenamientosDeCategoria,
     dbVacia, dbEjemplo, applyAction, viewFor,
-    hashClave, verificarClave, cambiarClave,
+    hashClave, verificarClave, cambiarClave, prepararAccion,
   };
 });
