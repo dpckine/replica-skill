@@ -29,6 +29,8 @@ test('API: login con RUT y 4 dígitos, acciones con permisos y bloqueo por inten
   assert.strictEqual(login.status, 200);
   const tok = login.body.token;
   assert.strictEqual(login.body.view.yo, jug);
+  const cons = login.body.view.documentos.find((d) => d.id === 'consentimiento');
+  assert.strictEqual((await pedir('/api/action', { type: 'documento.firmar', payload: { id: cons.id, aceptados: cons.puntos.map((_, i) => i), nombreFirma: 'Tomás Rojas' } }, tok)).status, 200);
 
   const dir = await pedir('/api/login', { rut: 'vieux', clave: 'vieuxg1234' });
   assert.strictEqual(dir.status, 200);

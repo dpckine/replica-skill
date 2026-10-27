@@ -26,7 +26,7 @@ const sha256 = async (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 function cargar() {
   try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    return core.migrar(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
   } catch (e) {
     if (e.code !== 'ENOENT') throw e;
     // Ambas parten con la cuenta de directiva "vieux" (clave vieuxg1234).

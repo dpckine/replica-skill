@@ -35,6 +35,29 @@ App de gestión del club con tres accesos: **Directiva**, **Entrenadores** y **J
 Un jugador está **habilitado para jugar** cuando su federativo del año está pagado.
 Al citar a un jugador no habilitado, la app avisa al entrenador.
 
+## Funciones del club
+
+- **Categorías:** Mini, Infantil, Cadete, Juvenil, Junior, Adultos B, Primer Equipo y Master,
+  cada una en rama Masculina y Femenina. En Infantil, Cadete y Juvenil se indica si el jugador
+  es de 1er o 2do año. La cuota se fija por categoría (igual para ambas ramas).
+- **Pagos online:** la directiva pone en Ajustes el link de pago de cuotas, el link del
+  federativo y los datos de transferencia. El jugador ve los botones "Pagar cuota",
+  "Pagar federativo" y "Datos de transferencia" en su perfil.
+- **Avisos:** directiva y entrenadores publican avisos para todo el club (partidos de otras
+  categorías, cambios de horario, etc.). Todos los ven; la directiva puede fijarlos arriba.
+- **Convocatorias:** al citar jugadores la convocatoria queda guardada en el partido, con
+  rival, hora, fecha, calcetas, lugar e indicaciones, en el mismo formato que la citación de
+  WhatsApp. Se puede descargar en PDF (opción "Guardar como PDF" del diálogo de impresión),
+  copiar el texto para WhatsApp o compartirla. Los jugadores confirman con "Voy" o "No puedo".
+- **Consentimiento informado:** la primera vez que un jugador entra debe firmar que su salud es
+  compatible con el deporte y que se compromete a asistir y a pagar sus cuotas. Los menores de
+  edad firman con su apoderado. Si la directiva cambia el texto puede pedir una nueva firma.
+- **Compromiso de becados:** la directiva envía (en Documentos) un compromiso extra a los
+  jugadores becados, que lo firman al ingresar. En Documentos se ve quién firmó y cuándo.
+
+Diseño estilo iOS: barra de pestañas abajo, títulos grandes, listas agrupadas, hojas que suben
+desde abajo y modo oscuro automático según el teléfono.
+
 ## Cómo correrla
 
 Requiere Node.js 18 o superior. No hay dependencias que instalar.
@@ -52,7 +75,8 @@ La primera vez se crea `data/db.json` con datos de ejemplo:
 |---|---|---|
 | Directiva | vieux | vieuxg1234 |
 | Entrenador | jorge | jorge1234 |
-| Jugador | 20.123.456-5 | 2012 |
+| Jugador (debe firmar el consentimiento al entrar) | 20.123.456-5 | 2012 |
+| Jugadora becada (firma el compromiso) | 20.555.666-4 | 2055 |
 | Entrenador que también juega | tomas | tomas1234 |
 
 ### Empezar con el club real (sin datos de ejemplo)

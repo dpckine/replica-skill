@@ -3,7 +3,7 @@
   "short_name": "Vieux Gaulois",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#F4F2EC",
-  "theme_color": "#1E2F6E",
-  "icons": [{ "src": "escudo.png", "sizes": "487x513", "type": "image/png", "purpose": "any" }]
+  "background_color": "#F2F2F7",
+  "theme_color": "#F2F2F7",
+  "icons": [{ "src": "escudo.png", "sizes": "256x270", "type": "image/png", "purpose": "any" }]
 }

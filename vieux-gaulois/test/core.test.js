@@ -10,6 +10,12 @@ const DIR = 'usr:vieux';
 const ENT = 'usr:jorge';
 const JUG = C.rutDesdeCuerpo(20123456);
 
+// En los datos de ejemplo Tomás (JUG) aún no firma el consentimiento.
+function firmar(db, rut) {
+  const d = db.documentos.find((x) => x.id === 'consentimiento');
+  C.applyAction(db, rut, { type: 'documento.firmar', payload: { id: d.id, aceptados: d.puntos.map((_, i) => i), nombreFirma: 'Nombre Completo' } });
+}
+
 test('RUT: valida dígito verificador y normaliza formatos', () => {
   assert.strictEqual(C.normalizarRut('11.111.111-1'), '11111111-1');
   assert.strictEqual(C.normalizarRut('111111111'), '11111111-1');
@@ -70,6 +76,7 @@ test('edad', () => {
 
 test('permisos: jugador no puede tocar finanzas ni citar', () => {
   const db = C.dbEjemplo();
+  firmar(db, JUG);
   for (const type of ['pago.marcar', 'federativo.marcar', 'config.guardar', 'jugador.crear', 'citacion.guardar', 'entrenamiento.guardar']) {
     assert.throws(() => C.applyAction(db, JUG, { type, payload: { rut: JUG, anio: ANIO, mes: 3, pagado: true } }), /permiso/, type);
   }
@@ -78,7 +85,7 @@ test('permisos: jugador no puede tocar finanzas ni citar', () => {
 test('permisos: entrenador inscribe jugadores pero no maneja finanzas', () => {
   const db = C.dbEjemplo();
   const nuevo = C.rutDesdeCuerpo(24111222);
-  C.applyAction(db, ENT, { type: 'jugador.crear', payload: { rut: nuevo, nombre: 'Nuevo Jugador', categoria: 'Juvenil', numero: 22 } });
+  C.applyAction(db, ENT, { type: 'jugador.crear', payload: { rut: nuevo, nombre: 'Nuevo Jugador', categoria: 'Junior Masculino', numero: 22 } });
   assert.ok(db.usuarios.find((u) => u.rut === nuevo));
   assert.throws(() => C.applyAction(db, ENT, { type: 'pago.marcar', payload: { rut: nuevo, anio: ANIO, mes: 3, pagado: true } }), /permiso/);
   assert.throws(() => C.applyAction(db, ENT, { type: 'config.guardar', payload: { montoFederativo: 1 } }), /permiso/);
@@ -86,7 +93,7 @@ test('permisos: entrenador inscribe jugadores pero no maneja finanzas', () => {
 
 test('no se repite número de camiseta en la misma categoría', () => {
   const db = C.dbEjemplo();
-  assert.throws(() => C.applyAction(db, DIR, { type: 'jugador.crear', payload: { rut: C.rutDesdeCuerpo(24111222), nombre: 'X', categoria: 'Adulto Varones', numero: 7 } }), /número 7/);
+  assert.throws(() => C.applyAction(db, DIR, { type: 'jugador.crear', payload: { rut: C.rutDesdeCuerpo(24111222), nombre: 'X', categoria: 'Primer Equipo Masculino', numero: 7 } }), /número 7/);
 });
 
 test('federativo pagado = habilitado para jugar', () => {
@@ -99,7 +106,7 @@ test('federativo pagado = habilitado para jugar', () => {
 
 test('cuota respeta precio de categoría y descuento', () => {
   const db = C.dbEjemplo();
-  C.applyAction(db, DIR, { type: 'config.guardar', payload: { cuotas: Object.assign({}, db.config.cuotas, { 'Adulto Damas': 30000 }) } });
+  C.applyAction(db, DIR, { type: 'config.guardar', payload: { cuotas: Object.assign({}, db.config.cuotas, { 'Primer Equipo': 30000 }) } });
   const v = db.usuarios.find((u) => u.nombre === 'Valentina Araya');
   assert.strictEqual(C.cuotaDe(db, v), 15000);
   C.applyAction(db, DIR, { type: 'pago.marcar', payload: { rut: v.rut, anio: ANIO, mes: 11, pagado: true } });
@@ -108,6 +115,7 @@ test('cuota respeta precio de categoría y descuento', () => {
 
 test('lesión del jugador llega como aviso sin ver para entrenador y directiva', () => {
   const db = C.dbEjemplo();
+  firmar(db, JUG);
   C.applyAction(db, JUG, { type: 'lesion.crear', payload: { zona: 'Tobillo', tipo: 'Lesión', intensidad: 7 } });
   const l = db.lesiones.find((x) => x.rut === JUG);
   assert.ok(l && !l.vistoPor.includes(ENT) && !l.vistoPor.includes(DIR));
@@ -120,9 +128,9 @@ test('lesión del jugador llega como aviso sin ver para entrenador y directiva',
 
 test('asistencia: realizados vs asistidos', () => {
   const db = C.dbEjemplo();
-  const e = { id: 'x', fecha: ANIO + '-01-02', hora: '20:00', categorias: ['Juvenil'], asistenciaTomada: false, asistencia: {} };
+  const e = { id: 'x', fecha: ANIO + '-01-02', hora: '20:00', categorias: ['Juvenil Masculino'], asistenciaTomada: false, asistencia: {} };
   db.entrenamientos = [e, Object.assign({}, e, { id: 'y' })];
-  const m = db.usuarios.find((u) => u.categoria === 'Juvenil');
+  const m = db.usuarios.find((u) => u.categoria === 'Juvenil Masculino');
   C.applyAction(db, ENT, { type: 'asistencia.guardar', payload: { id: 'x', asistencia: { [m.rut]: 'P' } } });
   C.applyAction(db, ENT, { type: 'asistencia.guardar', payload: { id: 'y', asistencia: { [m.rut]: 'A' } } });
   assert.deepStrictEqual(C.resumenAsistencia(db, m, ANIO), { realizados: 2, asistidos: 1, justificados: 0, porcentaje: 50 });
@@ -150,4 +158,95 @@ test('jugador confirma su citación', () => {
   C.applyAction(db, C.rutDesdeCuerpo(19876543), { type: 'citacion.responder', payload: { id: m.id, respuesta: 'confirmado' } });
   assert.strictEqual(m.citados[C.rutDesdeCuerpo(19876543)], 'confirmado');
   assert.throws(() => C.applyAction(db, C.rutDesdeCuerpo(18765432), { type: 'citacion.responder', payload: { id: m.id, respuesta: 'confirmado' } }), /No estás citado/);
+});
+
+test('categorías: 8 en rama masculina y femenina; Infantil a Juvenil exigen 1er o 2do año', () => {
+  const db = C.dbEjemplo();
+  assert.strictEqual(db.config.categorias.length, 16);
+  assert.ok(db.config.categorias.includes('Adultos B Femenino') && db.config.categorias.includes('Master Masculino'));
+  const base = { rut: C.rutDesdeCuerpo(25111222), nombre: 'Nueva Cadete', categoria: 'Cadete Femenino' };
+  assert.throws(() => C.applyAction(db, DIR, { type: 'jugador.crear', payload: base }), /1er o 2do año/);
+  C.applyAction(db, DIR, { type: 'jugador.crear', payload: Object.assign({ anioCategoria: '1' }, base) });
+  const j = db.usuarios.find((u) => u.rut === base.rut);
+  assert.strictEqual(C.etiquetaCategoria(j), 'Cadete Femenino · 1° año');
+  assert.strictEqual(C.cuotaDe(db, j), db.config.cuotas.Cadete);
+  // Junior no lleva año.
+  C.applyAction(db, DIR, { type: 'jugador.crear', payload: { rut: C.rutDesdeCuerpo(25111333), nombre: 'Junior X', categoria: 'Junior Masculino', anioCategoria: '2' } });
+  assert.strictEqual(db.usuarios.find((u) => u.nombre === 'Junior X').anioCategoria, '');
+});
+
+test('links de pago: sólo la directiva y sólo https', () => {
+  const db = C.dbEjemplo();
+  C.applyAction(db, DIR, { type: 'config.guardar', payload: { linkFederativo: 'https://pago.cl/fed', datosTransferencia: 'Banco X' } });
+  assert.strictEqual(db.config.linkFederativo, 'https://pago.cl/fed');
+  assert.throws(() => C.applyAction(db, DIR, { type: 'config.guardar', payload: { linkCuota: 'javascript:alert(1)' } }), /https/);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'config.guardar', payload: { linkCuota: 'https://x.cl' } }), /permiso/);
+  assert.strictEqual(C.viewFor(db, JUG).config.linkFederativo, 'https://pago.cl/fed');
+});
+
+test('avisos: staff publica, todos lo ven, sólo autor o directiva borran', () => {
+  const db = C.dbEjemplo();
+  firmar(db, JUG);
+  C.applyAction(db, ENT, { type: 'aviso.guardar', payload: { titulo: 'Juega la Mini', categoria: 'Mini Femenino', fijado: true } });
+  const a = db.avisos.find((x) => x.titulo === 'Juega la Mini');
+  assert.strictEqual(a.fijado, false); // sólo la directiva fija avisos
+  assert.ok(C.viewFor(db, JUG).avisos.some((x) => x.id === a.id));
+  assert.throws(() => C.applyAction(db, JUG, { type: 'aviso.guardar', payload: { titulo: 'x' } }), /permiso/);
+  assert.throws(() => C.applyAction(db, 'usr:tomas', { type: 'aviso.eliminar', payload: { id: a.id } }), /permiso/);
+  C.applyAction(db, DIR, { type: 'aviso.eliminar', payload: { id: a.id } });
+  assert.ok(!db.avisos.some((x) => x.id === a.id));
+});
+
+test('convocatoria queda guardada con vestimenta, indicaciones y quién citó', () => {
+  const db = C.dbEjemplo();
+  C.applyAction(db, ENT, { type: 'partido.guardar', payload: { rival: 'UdeC', fecha: '2026-10-25', hora: '15:00', categoria: 'Cadete Masculino', lugar: 'Parque Rivera Bio Bio', vestimenta: 'Negras' } });
+  const m = db.partidos.find((x) => x.rival === 'UdeC' && x.fecha === '2026-10-25');
+  assert.strictEqual(m.indicaciones, db.config.indicacionesCitacion);
+  const cadetes = db.usuarios.filter((u) => u.categoria === 'Cadete Masculino').map((u) => u.rut);
+  C.applyAction(db, ENT, { type: 'citacion.guardar', payload: { id: m.id, ruts: cadetes } });
+  assert.strictEqual(Object.keys(m.citados).length, cadetes.length);
+  assert.strictEqual(m.citadoPor, ENT);
+  assert.ok(m.citacionFecha);
+});
+
+test('consentimiento: bloquea hasta firmar; menores firman con apoderado', () => {
+  const db = C.dbEjemplo();
+  const d = db.documentos.find((x) => x.id === 'consentimiento');
+  assert.deepStrictEqual(C.viewFor(db, JUG).pendientes, ['consentimiento']);
+  assert.throws(() => C.applyAction(db, JUG, { type: 'citacion.responder', payload: {} }), /consentimiento/);
+  assert.throws(() => C.applyAction(db, JUG, { type: 'documento.firmar', payload: { id: d.id, aceptados: [0], nombreFirma: 'Tomás Rojas' } }), /todos los puntos/);
+  firmar(db, JUG);
+  assert.deepStrictEqual(C.viewFor(db, JUG).pendientes, []);
+  // Nueva versión: todos deben volver a firmar.
+  C.applyAction(db, DIR, { type: 'documento.guardar', payload: { id: d.id, titulo: d.titulo, texto: d.texto + ' Actualizado.', puntos: d.puntos, nuevaVersion: true } });
+  assert.deepStrictEqual(C.viewFor(db, JUG).pendientes, ['consentimiento']);
+  // Menor de edad sin apoderado.
+  const menor = db.usuarios.find((u) => u.nombre === 'Germán Meinas');
+  const firmaMenor = (apoderado) => C.applyAction(db, menor.rut, { type: 'documento.firmar', payload: { id: d.id, aceptados: d.puntos.map((_, i) => i), nombreFirma: 'Germán Meinas', apoderado } });
+  assert.throws(() => firmaMenor(''), /apoderado/);
+  firmaMenor('Ana Meinas 12.345.678-5');
+});
+
+test('compromiso de becados: la directiva lo envía y sólo esos jugadores lo firman', () => {
+  const db = C.dbEjemplo();
+  const becada = db.usuarios.find((u) => u.nombre === 'Valentina Araya');
+  assert.strictEqual(C.viewFor(db, becada.rut).pendientes.length, 1);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'documento.guardar', payload: Object.assign({ destinatarios: [JUG] }, C.COMPROMISO_BECA) }), /permiso/);
+  C.applyAction(db, DIR, { type: 'documento.guardar', payload: Object.assign({}, C.COMPROMISO_BECA, { titulo: 'Beca 2', destinatarios: [becada.rut] }) });
+  const v = C.viewFor(db, becada.rut);
+  assert.strictEqual(v.pendientes.length, 2);
+  assert.ok(!C.viewFor(db, C.rutDesdeCuerpo(19876543)).documentos.some((x) => x.titulo === 'Beca 2'));
+  assert.throws(() => C.applyAction(db, DIR, { type: 'documento.eliminar', payload: { id: 'consentimiento' } }), /no se puede eliminar/);
+});
+
+test('migrar completa una base de la versión anterior sin perder datos', () => {
+  const vieja = C.dbEjemplo();
+  vieja.version = 2;
+  delete vieja.avisos; delete vieja.documentos; delete vieja.firmas; delete vieja.config.categoriasBase; delete vieja.config.linkCuota;
+  const m = C.migrar(vieja);
+  assert.strictEqual(m.version, C.dbVacia().version);
+  assert.ok(Array.isArray(m.avisos) && m.documentos.some((d) => d.id === 'consentimiento'));
+  assert.strictEqual(m.config.categorias.length, 16);
+  assert.strictEqual(m.config.linkCuota, '');
+  assert.ok(m.usuarios.length > 5);
 });

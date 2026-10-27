@@ -114,7 +114,7 @@
   // ---------- Reglas del club ----------
 
   function cuotaDe(db, jugador) {
-    const base = Number(db.config.cuotas[jugador.categoria] || 0);
+    const base = Number(db.config.cuotas[baseCategoria(jugador.categoria)] || 0);
     const desc = Number(jugador.descuento || 0);
     return Math.round(base * (1 - desc / 100));
   }
@@ -157,20 +157,113 @@
     };
   }
 
+  // ---------- Categorías ----------
+  // Cada categoría existe en rama masculina y femenina ("Cadete Masculino", "Cadete Femenino").
+  // Las cuotas se fijan por categoría base; de Infantil a Juvenil se registra si es 1er o 2do año.
+
+  const CATEGORIAS_BASE = ['Mini', 'Infantil', 'Cadete', 'Juvenil', 'Junior', 'Adultos B', 'Primer Equipo', 'Master'];
+  const RAMAS = ['Masculino', 'Femenino'];
+  const CON_ANIO = ['Infantil', 'Cadete', 'Juvenil'];
+
+  function armarCategorias(bases) {
+    const out = [];
+    bases.forEach((b) => RAMAS.forEach((r) => out.push(b + ' ' + r)));
+    return out;
+  }
+
+  function baseCategoria(cat) {
+    const r = RAMAS.find((x) => String(cat).endsWith(' ' + x));
+    return r ? String(cat).slice(0, -(r.length + 1)) : String(cat || '');
+  }
+
+  function ramaCategoria(cat) {
+    return RAMAS.find((x) => String(cat).endsWith(' ' + x)) || '';
+  }
+
+  function llevaAnio(cat) {
+    return CON_ANIO.includes(baseCategoria(cat));
+  }
+
+  // "Cadete Masculino · 2° año"
+  function etiquetaCategoria(j) {
+    return (j.categoria || '') + (j.anioCategoria && llevaAnio(j.categoria) ? ' · ' + j.anioCategoria + '° año' : '');
+  }
+
+  // ---------- Documentos que firman los jugadores ----------
+
+  const CONSENTIMIENTO = {
+    id: 'consentimiento',
+    titulo: 'Consentimiento informado y compromiso del jugador',
+    texto: 'Al formar parte de Vieux Gaulois Handball declaro que:\n\n' +
+      'Mi estado de salud es compatible con la práctica del balonmano y no tengo conocimiento de enfermedades, lesiones o condiciones que me impidan realizar actividad física de alta intensidad. Si mi estado de salud cambia, lo informaré al cuerpo técnico y a la directiva a través de esta app.\n\n' +
+      'Me comprometo a asistir a los entrenamientos y partidos a los que sea citado, avisando con anticipación cuando no pueda asistir.\n\n' +
+      'Me comprometo a pagar puntualmente las cuotas mensuales y el pago federativo definidos por la directiva.\n\n' +
+      'Si soy menor de edad, mi apoderado autoriza mi participación y firma este documento conmigo.',
+    puntos: [
+      'Declaro que mi estado de salud es compatible con la práctica deportiva.',
+      'Me comprometo a asistir a entrenamientos y partidos.',
+      'Me comprometo a pagar las cuotas mensuales y el federativo.',
+    ],
+    destinatarios: 'todos',
+  };
+
+  const COMPROMISO_BECA = {
+    titulo: 'Compromiso de jugador becado',
+    texto: 'Vieux Gaulois Handball me otorga una beca o descuento en la cuota mensual.\n\n' +
+      'A cambio me comprometo a entrenar con regularidad, asistir a los partidos a los que sea citado y representar al club con buena conducta dentro y fuera de la cancha.\n\n' +
+      'Entiendo que la directiva puede revisar la beca si no cumplo este compromiso.',
+    puntos: ['Me comprometo a entrenar con regularidad.', 'Me comprometo a jugar los partidos a los que sea citado.'],
+  };
+
+  function documentoAplica(doc, rut) {
+    return doc.destinatarios === 'todos' || (Array.isArray(doc.destinatarios) && doc.destinatarios.includes(rut));
+  }
+
+  function firmaDe(db, rut, doc) {
+    return (db.firmas || []).find((f) => f.rut === rut && f.documentoId === doc.id && f.version === doc.version) || null;
+  }
+
+  // Documentos que el jugador todavía no firma (en su versión actual). El consentimiento va primero.
+  function documentosPendientes(db, rut) {
+    return (db.documentos || []).filter((d) => documentoAplica(d, rut) && !firmaDe(db, rut, d))
+      .sort((a, b) => (a.id === 'consentimiento' ? -1 : b.id === 'consentimiento' ? 1 : 0));
+  }
+
+  // Completa una base guardada con una versión anterior de la app (sin borrar datos).
+  function migrar(db) {
+    const base = dbVacia();
+    if (db.version >= base.version) return db;
+    ['avisos', 'firmas', 'movimientos', 'convenios'].forEach((k) => { db[k] = db[k] || []; });
+    db.documentos = db.documentos || base.documentos;
+    Object.keys(base.config).forEach((k) => { if (db.config[k] == null) db.config[k] = base.config[k]; });
+    if (!db.config.categoriasBase || !db.config.categoriasBase.length) {
+      db.config.categoriasBase = base.config.categoriasBase;
+      db.config.categorias = base.config.categorias;
+      db.config.cuotas = Object.assign({}, base.config.cuotas, db.config.cuotas);
+    }
+    db.version = base.version;
+    return db;
+  }
+
   // ---------- Base de datos inicial ----------
 
   function dbVacia() {
     const anio = new Date().getFullYear();
     return {
-      version: 2,
+      version: 3,
       config: {
         club: 'Vieux Gaulois Handball',
         temporada: anio,
-        categorias: ['Mini', 'Infantil', 'Cadete', 'Juvenil', 'Adulto Varones', 'Adulto Damas', 'Senior'],
-        cuotas: { Mini: 15000, Infantil: 18000, Cadete: 20000, Juvenil: 22000, 'Adulto Varones': 25000, 'Adulto Damas': 25000, Senior: 20000 },
+        categoriasBase: CATEGORIAS_BASE.slice(),
+        categorias: armarCategorias(CATEGORIAS_BASE),
+        cuotas: { Mini: 15000, Infantil: 18000, Cadete: 20000, Juvenil: 22000, Junior: 25000, 'Adultos B': 25000, 'Primer Equipo': 25000, Master: 20000 },
         montoFederativo: 35000,
         mesesCobro: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
         diaVencimiento: 10,
+        linkCuota: '',
+        linkFederativo: '',
+        datosTransferencia: '',
+        indicacionesCitacion: 'Llevar carnet, calcetas negras, short negro, botella de agua y toalla de mano.',
       },
       usuarios: [Object.assign({ creado: hoyISO() }, CUENTA_DIRECTIVA)],
       pagos: {},
@@ -180,6 +273,9 @@
       lesiones: [],
       convenios: [],
       movimientos: [],
+      avisos: [],
+      documentos: [Object.assign({ version: 1, creado: hoyISO() }, clone(CONSENTIMIENTO))],
+      firmas: [],
     };
   }
 
@@ -187,27 +283,38 @@
     const db = dbVacia();
     const anio = db.config.temporada;
     const hoy = hoyISO();
+    Object.assign(db.config, {
+      linkCuota: 'https://www.webpay.cl/form-pay/ejemplo-cuota',
+      linkFederativo: 'https://www.webpay.cl/form-pay/ejemplo-federativo',
+      datosTransferencia: 'Club Deportivo Vieux Gaulois\nRUT 65.123.456-7\nBanco Estado, Cuenta Corriente 12345678\ntesoreria@vieuxgaulois.cl',
+    });
     const add = (cuerpo, datos) => {
       const u = Object.assign({ rut: rutDesdeCuerpo(cuerpo), activo: true, creado: hoy }, datos);
       db.usuarios.push(u);
       return u;
     };
     db.usuarios.push({
-      rut: 'usr:jorge', usuario: 'jorge', rol: 'entrenador', nombre: 'Jorge Pérez', cargo: 'Entrenador Adulto', telefono: '+56 9 2222 2222', activo: true, creado: hoy,
+      rut: 'usr:jorge', usuario: 'jorge', rol: 'entrenador', nombre: 'Jorge Pérez', cargo: 'Entrenador Cadetes', telefono: '+56 9 2222 2222', activo: true, creado: hoy,
       claveHash: '87f28f30a50033150d34790d77b007cfd5f43dab18eb5f530ca6174592790396', // jorge1234
     });
-    // Tomás juega en Adulto (entra con su RUT) y además entrena a la Juvenil (entra con usuario "tomas").
+    // Tomás juega en el Primer Equipo (entra con su RUT) y además entrena a la Juvenil (entra con usuario "tomas").
     db.usuarios.push({
       rut: 'usr:tomas', usuario: 'tomas', rol: 'entrenador', nombre: 'Tomás Rojas', cargo: 'Entrenador Juvenil', activo: true, creado: hoy,
       jugadorRut: rutDesdeCuerpo(20123456), claveHash: 'd355c072d67c4714eb6120152e17fad62ced7f0190ad54dce3532321967ea1cb', // tomas1234
     });
+    const PE = 'Primer Equipo Masculino', CAD = 'Cadete Masculino';
     const jugadores = [
-      add(20123456, { nombre: 'Tomás Rojas', rol: 'jugador', fechaNac: '2001-04-12', categoria: 'Adulto Varones', numero: 7, posicion: 'Central', telefono: '+56 9 3333 3333' }),
-      add(19876543, { nombre: 'Diego Muñoz', rol: 'jugador', fechaNac: '1998-09-03', categoria: 'Adulto Varones', numero: 1, posicion: 'Arquero' }),
-      add(21345678, { nombre: 'Benjamín Soto', rol: 'jugador', fechaNac: '2003-01-25', categoria: 'Adulto Varones', numero: 10, posicion: 'Lateral izquierdo' }),
-      add(18765432, { nombre: 'Camila Fuentes', rol: 'jugador', fechaNac: '1996-11-30', categoria: 'Adulto Damas', numero: 9, posicion: 'Pivote' }),
-      add(20555666, { nombre: 'Valentina Araya', rol: 'jugador', fechaNac: '2000-06-18', categoria: 'Adulto Damas', numero: 14, posicion: 'Extremo derecho', descuento: 50 }),
-      add(23456789, { nombre: 'Matías Contreras', rol: 'jugador', fechaNac: '2008-03-08', categoria: 'Juvenil', numero: 5, posicion: 'Extremo izquierdo' }),
+      add(20123456, { nombre: 'Tomás Rojas', rol: 'jugador', fechaNac: '2001-04-12', categoria: PE, numero: 7, posicion: 'Central', telefono: '+56 9 3333 3333' }),
+      add(19876543, { nombre: 'Diego Muñoz', rol: 'jugador', fechaNac: '1998-09-03', categoria: PE, numero: 1, posicion: 'Arquero' }),
+      add(21345678, { nombre: 'Benjamín Soto', rol: 'jugador', fechaNac: '2003-01-25', categoria: 'Adultos B Masculino', numero: 10, posicion: 'Lateral izquierdo' }),
+      add(18765432, { nombre: 'Camila Fuentes', rol: 'jugador', fechaNac: '1996-11-30', categoria: 'Primer Equipo Femenino', numero: 9, posicion: 'Pivote' }),
+      add(20555666, { nombre: 'Valentina Araya', rol: 'jugador', fechaNac: '2000-06-18', categoria: 'Primer Equipo Femenino', numero: 14, posicion: 'Extremo derecho', descuento: 50 }),
+      add(23456789, { nombre: 'Matías Contreras', rol: 'jugador', fechaNac: '2008-03-08', categoria: 'Juvenil Masculino', anioCategoria: '2', numero: 5, posicion: 'Extremo izquierdo' }),
+      add(24567890, { nombre: 'Germán Meinas', rol: 'jugador', fechaNac: '2010-02-11', categoria: CAD, anioCategoria: '2', numero: 1, posicion: 'Arquero' }),
+      add(24678901, { nombre: 'Renato Flores', rol: 'jugador', fechaNac: '2010-07-21', categoria: CAD, anioCategoria: '2', numero: 4, posicion: 'Central' }),
+      add(24789012, { nombre: 'Agustín Contreras', rol: 'jugador', fechaNac: '2011-03-02', categoria: CAD, anioCategoria: '1', numero: 8, posicion: 'Pivote' }),
+      add(24890123, { nombre: 'Benjamín Aguayo', rol: 'jugador', fechaNac: '2011-09-15', categoria: CAD, anioCategoria: '1', numero: 11, posicion: 'Extremo derecho' }),
+      add(24901234, { nombre: 'Sofía Herrera', rol: 'jugador', fechaNac: '2012-05-30', categoria: 'Infantil Femenino', anioCategoria: '1', numero: 6, posicion: 'Lateral derecho' }),
     ];
 
     const mesActual = new Date().getMonth();
@@ -218,48 +325,76 @@
           db.pagos[j.rut][anio][m] = { pagado: true, monto: cuotaDe(db, j), fecha: hoyISO(new Date(anio, m, 5)), metodo: 'Transferencia' };
         }
       });
-      if (i !== 2 && i !== 5) {
+      if (i !== 2 && i !== 5 && i !== 9) {
         db.federativo[j.rut] = { [anio]: { pagado: true, monto: db.config.montoFederativo, fecha: hoyISO(new Date(anio, 2, 15)) } };
       }
+      // Todos firmaron el consentimiento menos Tomás, para ver la firma al ingresar.
+      if (i !== 0) {
+        db.firmas.push({ id: uid(), rut: j.rut, documentoId: 'consentimiento', version: 1, fecha: hoyISO(new Date(anio, 2, 1)), nombreFirma: j.nombre, apoderado: edad(j.fechaNac) < 18 ? 'Apoderado de ' + j.nombre.split(' ')[0] : '' });
+      }
     });
+
+    // Compromiso extra enviado por la directiva a la jugadora becada (sin firmar aún).
+    db.documentos.push(Object.assign({ id: uid(), version: 1, creado: hoy, destinatarios: [jugadores[4].rut] }, clone(COMPROMISO_BECA)));
 
     // Entrenamientos: martes y jueves de las últimas 3 semanas (con asistencia) y las próximas 2.
     const base = new Date();
     base.setDate(base.getDate() - ((base.getDay() + 5) % 7)); // martes de esta semana (o el anterior)
+    const adultos = [PE, 'Adultos B Masculino', 'Primer Equipo Femenino'];
     for (let s = -3; s <= 1; s++) {
       [0, 2].forEach((off) => {
         const fecha = sumarDias(hoyISO(base), s * 7 + off);
         const pasado = fecha < hoy;
         const e = {
           id: uid(), fecha, hora: '20:00', duracion: 90, lugar: 'Gimnasio Municipal',
-          categorias: ['Adulto Varones', 'Adulto Damas'], tema: off ? 'Táctica defensiva 6:0' : 'Físico y lanzamiento',
+          categorias: adultos, tema: off ? 'Táctica defensiva 6:0' : 'Físico y lanzamiento',
           asistenciaTomada: pasado, asistencia: {},
         };
+        const cad = {
+          id: uid(), fecha, hora: '18:00', duracion: 75, lugar: 'Gimnasio Colegio', categorias: [CAD, 'Juvenil Masculino'],
+          tema: off ? 'Contraataque' : 'Técnica individual', asistenciaTomada: pasado, asistencia: {},
+        };
         if (pasado) {
-          jugadores.filter((j) => j.categoria.startsWith('Adulto')).forEach((j, k) => {
+          jugadores.filter((j) => adultos.includes(j.categoria)).forEach((j, k) => {
             e.asistencia[j.rut] = (k + s + off) % 4 === 0 ? 'A' : (k + s) % 5 === 0 ? 'J' : 'P';
           });
+          jugadores.filter((j) => cad.categorias.includes(j.categoria)).forEach((j, k) => {
+            cad.asistencia[j.rut] = (k + s + off) % 5 === 0 ? 'A' : 'P';
+          });
         }
-        db.entrenamientos.push(e);
+        db.entrenamientos.push(e, cad);
       });
     }
-    db.entrenamientos.push({ id: uid(), fecha: sumarDias(hoy, 1), hora: '18:30', duracion: 75, lugar: 'Gimnasio Colegio', categorias: ['Juvenil'], tema: 'Técnica individual', asistenciaTomada: false, asistencia: {} });
 
+    const ruts = (lista) => { const o = {}; lista.forEach(([j, est]) => { o[j.rut] = est; }); return o; };
+    db.partidos.push({
+      id: uid(), fecha: sumarDias(hoy, 5), hora: '15:00', rival: 'UdeC', lugar: 'Parque Rivera Bio Bio',
+      condicion: 'Visita', competicion: 'Liga Regional', categoria: CAD, vestimenta: 'Negras',
+      indicaciones: db.config.indicacionesCitacion, presentacion: '14:00', resultado: null,
+      citados: ruts([[jugadores[6], 'confirmado'], [jugadores[7], 'pendiente'], [jugadores[8], 'confirmado'], [jugadores[9], 'pendiente']]),
+      citacionFecha: hoy, citadoPor: 'usr:jorge',
+    });
     db.partidos.push({
       id: uid(), fecha: sumarDias(hoy, 4), hora: '17:00', rival: 'Club Balonmano Andes', lugar: 'Gimnasio Municipal',
-      condicion: 'Local', competicion: 'Liga Metropolitana', categoria: 'Adulto Varones',
-      citados: { [jugadores[0].rut]: 'confirmado', [jugadores[1].rut]: 'pendiente' }, presentacion: '16:00', resultado: null,
+      condicion: 'Local', competicion: 'Liga Metropolitana', categoria: PE, vestimenta: 'Blancas', indicaciones: db.config.indicacionesCitacion,
+      citados: ruts([[jugadores[0], 'confirmado'], [jugadores[1], 'pendiente']]), presentacion: '16:00', resultado: null, citacionFecha: hoy, citadoPor: 'usr:jorge',
     });
     db.partidos.push({
       id: uid(), fecha: sumarDias(hoy, 11), hora: '12:00', rival: 'Deportivo Costa', lugar: 'Polideportivo Costa',
-      condicion: 'Visita', competicion: 'Liga Metropolitana', categoria: 'Adulto Damas',
-      citados: { [jugadores[3].rut]: 'pendiente', [jugadores[4].rut]: 'pendiente' }, presentacion: '10:30', resultado: null,
+      condicion: 'Visita', competicion: 'Liga Metropolitana', categoria: 'Primer Equipo Femenino', vestimenta: 'Negras', indicaciones: db.config.indicacionesCitacion,
+      citados: ruts([[jugadores[3], 'pendiente'], [jugadores[4], 'pendiente']]), presentacion: '10:30', resultado: null, citacionFecha: hoy, citadoPor: 'usr:vieux',
     });
     db.partidos.push({
       id: uid(), fecha: sumarDias(hoy, -6), hora: '19:00', rival: 'Handball Sur', lugar: 'Gimnasio Municipal',
-      condicion: 'Local', competicion: 'Liga Metropolitana', categoria: 'Adulto Varones',
-      citados: { [jugadores[0].rut]: 'confirmado', [jugadores[1].rut]: 'confirmado' }, presentacion: '18:00', resultado: { nuestro: 28, rival: 24 },
+      condicion: 'Local', competicion: 'Liga Metropolitana', categoria: PE, vestimenta: 'Blancas', indicaciones: db.config.indicacionesCitacion,
+      citados: ruts([[jugadores[0], 'confirmado'], [jugadores[1], 'confirmado']]), presentacion: '18:00', resultado: { nuestro: 28, rival: 24 }, citacionFecha: sumarDias(hoy, -9), citadoPor: 'usr:jorge',
     });
+
+    db.avisos.push(
+      { id: uid(), fecha: hoy, autor: 'usr:vieux', titulo: 'Juvenil Femenino juega el sábado', texto: 'Vamos todos a apoyar a la Juvenil Femenino contra Deportes Concepción. ¡Lleven bombos!', categoria: 'Juvenil Femenino', fechaEvento: sumarDias(hoy, 3), hora: '11:00', lugar: 'Casa del Deporte', link: '', fijado: true },
+      { id: uid(), fecha: sumarDias(hoy, -1), autor: 'usr:jorge', titulo: 'Cambio de horario Cadetes', texto: 'Esta semana los Cadetes entrenan a las 18:00 en vez de 18:30.', categoria: CAD, fechaEvento: '', hora: '', lugar: '', link: '', fijado: false },
+      { id: uid(), fecha: sumarDias(hoy, -4), autor: 'usr:vieux', titulo: 'Pago federativo ' + anio, texto: 'Recuerden pagar el federativo con el link de pago de su perfil. Sin federativo pagado no se puede jugar partidos oficiales.', categoria: '', fechaEvento: '', hora: '', lugar: '', link: '', fijado: false }
+    );
 
     db.lesiones.push({
       id: uid(), rut: jugadores[2].rut, fecha: sumarDias(hoy, -2), zona: 'Hombro derecho', tipo: 'Dolor',
@@ -328,10 +463,16 @@
         && u.categoria === p.categoria && Number(u.numero) === numero);
       if (choque) throw err('El número ' + numero + ' ya lo usa ' + choque.nombre + ' en ' + p.categoria);
     }
+    let anioCategoria = '';
+    if (llevaAnio(p.categoria)) {
+      anioCategoria = String(p.anioCategoria || '');
+      if (!['1', '2'].includes(anioCategoria)) throw err('Indica si es 1er o 2do año de ' + baseCategoria(p.categoria));
+    }
     Object.assign(j, {
       nombre,
       fechaNac: p.fechaNac || '',
       categoria: p.categoria,
+      anioCategoria,
       numero,
       posicion: texto(p.posicion, 40),
       telefono: texto(p.telefono, 30),
@@ -339,6 +480,13 @@
       contactoEmergencia: texto(p.contactoEmergencia, 120),
       prevision: texto(p.prevision, 60),
     });
+  }
+
+  // Sólo se aceptan links web (evita "javascript:" y similares).
+  function link(v) {
+    const t = texto(v, 400);
+    if (t && !/^https?:\/\/[^\s]+$/i.test(t)) throw err('El link debe empezar con https://');
+    return t;
   }
 
   function datosEvento(p, db) {
@@ -360,6 +508,12 @@
     const esStaff = esDir || rol === 'entrenador';
     const exigir = (ok) => { if (!ok) throw err('No tienes permiso para esta acción'); };
     const anio = num(p.anio, 2000, 2100);
+
+    // El jugador debe firmar el consentimiento antes de usar la app.
+    if (rol === 'jugador' && action && action.type !== 'documento.firmar'
+      && documentosPendientes(db, actor.rut).some((d) => d.id === 'consentimiento')) {
+      throw err('Primero debes firmar el consentimiento informado');
+    }
 
     switch (action && action.type) {
       // ----- Jugadores -----
@@ -525,7 +679,8 @@
         Object.assign(datos, {
           rival, categoria: p.categoria, condicion: p.condicion === 'Visita' ? 'Visita' : 'Local',
           competicion: texto(p.competicion, 80), presentacion: horaValida(p.presentacion) ? (p.presentacion || '') : '',
-          notas: texto(p.notas, 300),
+          notas: texto(p.notas, 300), vestimenta: texto(p.vestimenta, 60),
+          indicaciones: p.indicaciones == null ? db.config.indicacionesCitacion : texto(p.indicaciones, 300),
         });
         if (p.id) {
           const m = db.partidos.find((x) => x.id === p.id);
@@ -559,6 +714,8 @@
           nuevos[rut] = m.citados[rut] || 'pendiente';
         });
         m.citados = nuevos;
+        m.citacionFecha = hoyISO();
+        m.citadoPor = actor.rut;
         break;
       }
       case 'citacion.responder': {
@@ -573,18 +730,24 @@
       case 'config.guardar': {
         exigir(esDir);
         const c = db.config;
-        if (Array.isArray(p.categorias)) {
-          const cats = p.categorias.map((x) => texto(x, 40)).filter(Boolean);
-          if (!cats.length) throw err('Debe existir al menos una categoría');
-          const enUso = db.usuarios.filter((u) => u.rol === 'jugador' && u.activo !== false && !cats.includes(u.categoria));
-          if (enUso.length) throw err('No puedes quitar la categoría "' + enUso[0].categoria + '": tiene jugadores activos');
-          c.categorias = Array.from(new Set(cats));
+        if (Array.isArray(p.categoriasBase)) {
+          const bases = Array.from(new Set(p.categoriasBase.map((x) => texto(x, 40)).filter(Boolean)));
+          if (!bases.length) throw err('Debe existir al menos una categoría');
+          const nuevas = armarCategorias(bases);
+          const enUso = db.usuarios.find((u) => u.rol === 'jugador' && u.activo !== false && !nuevas.includes(u.categoria));
+          if (enUso) throw err('No puedes quitar "' + baseCategoria(enUso.categoria) + '": tiene jugadores activos');
+          c.categoriasBase = bases;
+          c.categorias = nuevas;
         }
         if (p.cuotas && typeof p.cuotas === 'object') {
           const cuotas = {};
-          c.categorias.forEach((cat) => { cuotas[cat] = num(p.cuotas[cat], 0, 10000000) || 0; });
+          c.categoriasBase.forEach((b) => { cuotas[b] = num(p.cuotas[b] != null ? p.cuotas[b] : c.cuotas[b], 0, 10000000) || 0; });
           c.cuotas = cuotas;
         }
+        if (p.linkCuota != null) c.linkCuota = link(p.linkCuota);
+        if (p.linkFederativo != null) c.linkFederativo = link(p.linkFederativo);
+        if (p.datosTransferencia != null) c.datosTransferencia = texto(p.datosTransferencia, 500);
+        if (p.indicacionesCitacion != null) c.indicacionesCitacion = texto(p.indicacionesCitacion, 300);
         if (p.montoFederativo != null) c.montoFederativo = num(p.montoFederativo, 0, 10000000) || 0;
         if (Array.isArray(p.mesesCobro)) c.mesesCobro = p.mesesCobro.map(Number).filter((m) => m >= 0 && m <= 11).sort((a, b) => a - b);
         if (p.diaVencimiento != null) c.diaVencimiento = num(p.diaVencimiento, 1, 28) || 10;
@@ -654,6 +817,80 @@
         break;
       }
 
+      // ----- Avisos (para todo el club) -----
+      case 'aviso.guardar': {
+        exigir(esStaff);
+        const titulo = texto(p.titulo, 100);
+        if (!titulo) throw err('Indica un título');
+        if (p.categoria && !db.config.categorias.includes(p.categoria)) throw err('Categoría no válida');
+        if (p.fechaEvento && !fechaValida(p.fechaEvento)) throw err('Fecha no válida');
+        if (!horaValida(p.hora)) throw err('Hora no válida');
+        const datos = {
+          titulo, texto: texto(p.texto, 1000), categoria: p.categoria || '', fechaEvento: p.fechaEvento || '',
+          hora: p.hora || '', lugar: texto(p.lugar, 100), link: link(p.link), fijado: esDir && !!p.fijado,
+        };
+        db.avisos = db.avisos || [];
+        if (p.id) {
+          const a = db.avisos.find((x) => x.id === p.id);
+          if (!a) throw err('Aviso no encontrado');
+          exigir(esDir || a.autor === actor.rut);
+          if (!esDir) datos.fijado = a.fijado;
+          Object.assign(a, datos);
+        } else {
+          db.avisos.push(Object.assign({ id: uid(), fecha: hoyISO(), autor: actor.rut }, datos));
+        }
+        break;
+      }
+      case 'aviso.eliminar': {
+        const a = (db.avisos || []).find((x) => x.id === p.id);
+        if (!a) throw err('Aviso no encontrado');
+        exigir(esDir || a.autor === actor.rut);
+        db.avisos = db.avisos.filter((x) => x.id !== p.id);
+        break;
+      }
+
+      // ----- Documentos para firmar -----
+      case 'documento.guardar': {
+        exigir(esDir);
+        const titulo = texto(p.titulo, 120), cuerpo = texto(p.texto, 5000);
+        if (!titulo || !cuerpo) throw err('Indica título y texto del documento');
+        const puntos = (Array.isArray(p.puntos) ? p.puntos : String(p.puntos || '').split('\n')).map((x) => texto(x, 200)).filter(Boolean);
+        if (p.id) {
+          const d = db.documentos.find((x) => x.id === p.id);
+          if (!d) throw err('Documento no encontrado');
+          Object.assign(d, { titulo, texto: cuerpo, puntos });
+          // Con "pedir nueva firma" todos los destinatarios deben volver a firmar.
+          if (p.nuevaVersion) { d.version += 1; d.creado = hoyISO(); }
+          if (d.id !== 'consentimiento' && Array.isArray(p.destinatarios)) d.destinatarios = p.destinatarios.filter((r) => buscarUsuario(db, r));
+        } else {
+          const dest = (Array.isArray(p.destinatarios) ? p.destinatarios : []).filter((r) => { const u = buscarUsuario(db, r); return u && u.rol === 'jugador'; });
+          if (!dest.length) throw err('Elige al menos un jugador');
+          db.documentos.push({ id: uid(), titulo, texto: cuerpo, puntos, destinatarios: dest, version: 1, creado: hoyISO() });
+        }
+        break;
+      }
+      case 'documento.eliminar': {
+        exigir(esDir);
+        if (p.id === 'consentimiento') throw err('El consentimiento informado no se puede eliminar');
+        db.documentos = db.documentos.filter((x) => x.id !== p.id);
+        break;
+      }
+      case 'documento.firmar': {
+        exigir(rol === 'jugador');
+        const d = (db.documentos || []).find((x) => x.id === p.id);
+        if (!d || !documentoAplica(d, actor.rut)) throw err('Documento no encontrado');
+        if (firmaDe(db, actor.rut, d)) throw err('Ya firmaste este documento');
+        const aceptados = Array.isArray(p.aceptados) ? p.aceptados.map(Number) : [];
+        if (d.puntos.some((_, i) => !aceptados.includes(i))) throw err('Debes aceptar todos los puntos para firmar');
+        const nombreFirma = texto(p.nombreFirma, 80);
+        if (nombreFirma.length < 5) throw err('Escribe tu nombre completo como firma');
+        const menor = actor.fechaNac && edad(actor.fechaNac) < 18;
+        const apoderado = texto(p.apoderado, 120);
+        if (menor && apoderado.length < 5) throw err('Eres menor de edad: tu apoderado debe firmar con su nombre y RUT');
+        db.firmas.push({ id: uid(), rut: actor.rut, documentoId: d.id, version: d.version, fecha: hoyISO(), nombreFirma, apoderado });
+        break;
+      }
+
       default:
         throw err('Acción desconocida');
     }
@@ -720,11 +957,14 @@
     const anio = new Date().getFullYear();
     const yoV = v.usuarios.find((u) => u.rut === rut);
     const nombreDe = (r) => { const u = buscarUsuario(db, r); return u ? { nombre: u.nombre, numero: u.numero } : { nombre: '?', numero: null }; };
+    const porNumero = (a, b) => (a.numero == null ? 999 : a.numero) - (b.numero == null ? 999 : b.numero) || a.nombre.localeCompare(b.nombre);
     v.usuarios = [yoV].concat(v.usuarios.filter((u) => u.rol !== 'jugador' && u.activo !== false)
       .map((u) => ({ rut: u.rut, nombre: u.nombre, rol: u.rol, cargo: u.cargo, telefono: u.telefono, jugadorRut: u.jugadorRut === rut ? rut : '' })));
     v.pagos = { [rut]: db.pagos[rut] || {} };
     v.federativo = { [rut]: db.federativo[rut] || {} };
     v.lesiones = v.lesiones.filter((l) => l.rut === rut);
+    v.documentos = v.documentos.filter((d) => documentoAplica(d, rut));
+    v.firmas = v.firmas.filter((f) => f.rut === rut);
     delete v.movimientos;
     v.entrenamientos = entrenamientosDeCategoria(v, yo.categoria).map((e) => {
       const r = Object.assign({}, e, { miAsistencia: (e.asistencia || {})[rut] || null });
@@ -734,12 +974,13 @@
     v.partidos = v.partidos.filter((m) => m.categoria === yo.categoria || m.citados[rut]).map((m) => {
       const r = Object.assign({}, m, {
         miCitacion: m.citados[rut] || null,
-        citadosLista: Object.keys(m.citados).map(nombreDe).sort((a, b) => (a.numero || 0) - (b.numero || 0)),
+        citadosLista: Object.keys(m.citados).map(nombreDe).sort(porNumero),
       });
       delete r.citados;
       return r;
     });
     v.resumen = { asistencia: resumenAsistencia(db, yo, anio), cuota: cuotaDe(db, yo) };
+    v.pendientes = documentosPendientes(db, rut).map((d) => d.id);
     return v;
   }
 
@@ -748,8 +989,10 @@
     limpiarRut, dvRut, normalizarRut, formatearRut, claveInicial, rutDesdeCuerpo,
     normalizarUsuario, idDeIngreso, textoHash, CUENTA_DIRECTIVA,
     hoyISO, sumarDias, edad, uid, clone,
+    CATEGORIAS_BASE, RAMAS, CON_ANIO, armarCategorias, baseCategoria, ramaCategoria, llevaAnio, etiquetaCategoria,
+    COMPROMISO_BECA, documentoAplica, firmaDe, documentosPendientes,
     cuotaDe, federativoPagado, habilitado, pagoMes, mesesAdeudados, resumenAsistencia, entrenamientosDeCategoria,
-    dbVacia, dbEjemplo, applyAction, viewFor,
+    dbVacia, dbEjemplo, migrar, applyAction, viewFor,
     hashClave, verificarClave, cambiarClave, prepararAccion,
   };
 });
