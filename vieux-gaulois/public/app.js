@@ -69,7 +69,7 @@
     filtroCat: leerLS('vg_cat') || '', busqueda: '', anioFin: ANIO, verInactivos: false, verPasados: false,
     hilo: null, borrador: {}, piz: null,
     // Apoderado: S.apo guarda la vista completa (todos sus hijos); S.view es la del hijo elegido.
-    apo: null, hijo: leerLS('vg_hijo') || '', catEst: '', catFis: '', verDevueltos: false,
+    apo: null, hijo: leerLS('vg_hijo') || '', catEst: '', catFis: '', verDevueltos: false, verApo: false, stickerClaro: false,
   };
 
   // ---------- Backend: servidor real o modo demo local ----------
@@ -220,6 +220,10 @@
 
   // ---------- Íconos (trazo de 24px, estilo Material) ----------
   const ICONOS = {
+    equipo: '<circle cx="12" cy="7" r="3.2"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/><path d="M3 9.5l2-1.5 2 1.5M17 9.5l2-1.5 2 1.5"/>',
+    grupo: '<path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4V6a1 1 0 0 1 1-1z"/><circle cx="9" cy="11" r="1"/><circle cx="12.5" cy="11" r="1"/><circle cx="16" cy="11" r="1"/>',
+    sticker: '<path d="M14 21H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v8z"/><path d="M14 21v-4a3 3 0 0 1 3-3h4"/><path d="M8.5 9.5h.01M15.5 9.5h.01M8.5 14a4.5 4.5 0 0 0 4 1.5"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
     cambiar: '<path d="M7 4L3 8l4 4M3 8h14M17 12l4 4-4 4M21 16H7"/>',
     inicio: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
     avisos: '<path d="M3 10v4a1 1 0 0 0 1 1h3l7 4.5V4.5L7 9H4a1 1 0 0 0-1 1z"/><path d="M17.5 8.5a5 5 0 0 1 0 7"/>',
@@ -277,7 +281,16 @@
 
   // ---------- Componentes ----------
   const insignia = (txt, tipo) => '<span class="insignia ' + (tipo || '') + '">' + h(txt) + '</span>';
-  const habInsignia = (rut) => (hab(rut) ? insignia('Habilitado', 'ok') : insignia('No habilitado', 'mal'));
+  // Estado del jugador: lesionado (lo marca el cuerpo técnico), habilitado o no habilitado (federativo pendiente).
+  const ESTADOS = { habilitado: ['Habilitado', 'ok'], lesionado: ['Lesionado', 'mal'], noHabilitado: ['No habilitado', 'mal'] };
+  const estado = (rut) => { const j = usuario(rut); return j ? C.estadoJugador(S.view, j, ANIO) : 'noHabilitado'; };
+  const habInsignia = (rut) => { const e = ESTADOS[estado(rut)]; return insignia(e[0], e[1]) + (estado(rut) === 'lesionado' && !hab(rut) ? insignia('Federativo pendiente', 'alerta') : ''); };
+  function selectorEstado(j) {
+    const e = j.lesionado ? 'lesionado' : 'habilitado';
+    return '<div class="estado-sel" role="group" aria-label="Estado del jugador">' + [['habilitado', 'Habilitado'], ['lesionado', 'Lesionado']].map(([v, t]) =>
+      '<button type="button" class="' + (e === v ? 'activo ' : '') + v + '" data-act="estadoJugador" data-rut="' + h(j.rut) + '" data-e="' + v + '" aria-pressed="' + (e === v) + '">' + (e === v ? icono('check') : '') + t + '</button>').join('') + '</div>' +
+      (e === 'habilitado' && !hab(j.rut) ? '<p class="ayuda">Aparece como <b>No habilitado</b> hasta que pague el federativo ' + ANIO + '.</p>' : '');
+  }
   const camiseta = (j) => '<div class="camiseta">' + (j.numero != null ? h(j.numero) : '–') + '</div>';
   const fechaCaja = (iso, partido) => '<div class="fecha-caja' + (partido ? ' partido' : '') + '"><small>' + h(C.MESES[fDia(iso).getMonth()]) + '</small><b>' + fDia(iso).getDate() + '</b></div>';
   const vacio = (txt) => '<div class="vacio">' + h(txt) + '</div>';
@@ -427,10 +440,11 @@
     inicio: 'Inicio', avisos: 'Avisos', jugadores: 'Jugadores', finanzas: 'Finanzas', entrenamientos: 'Entrenamientos', partidos: 'Partidos',
     lesiones: 'Lesiones', documentos: 'Documentos', convenios: 'Convenios', ajustes: 'Ajustes', calendario: 'Calendario', perfil: 'Mi perfil', mas: 'Más',
     chat: 'Mensajes', pizarra: 'Pizarra', jugadas: 'Jugadas',
+    equipo: 'Directiva y entrenadores',
     estadisticas: 'Estadísticas', fisico: 'Evaluación física', encuestas: 'Encuestas', galeria: 'Galería', inventario: 'Inventario',
   };
   const TABS = {
-    directiva: { barra: ['inicio', 'jugadores', 'finanzas', 'chat'], mas: ['partidos', 'entrenamientos', 'estadisticas', 'fisico', 'pizarra', 'avisos', 'encuestas', 'galeria', 'lesiones', 'inventario', 'documentos', 'convenios', 'calendario', 'ajustes'] },
+    directiva: { barra: ['inicio', 'jugadores', 'finanzas', 'chat'], mas: ['equipo', 'partidos', 'entrenamientos', 'estadisticas', 'fisico', 'pizarra', 'avisos', 'encuestas', 'galeria', 'lesiones', 'inventario', 'documentos', 'convenios', 'calendario', 'ajustes'] },
     entrenador: { barra: ['inicio', 'jugadores', 'partidos', 'pizarra'], mas: ['entrenamientos', 'estadisticas', 'fisico', 'chat', 'avisos', 'encuestas', 'galeria', 'lesiones', 'inventario', 'convenios', 'calendario'] },
     jugador: { barra: ['perfil', 'finanzas', 'chat', 'avisos'], mas: ['calendario', 'estadisticas', 'jugadas', 'encuestas', 'galeria', 'convenios'] },
   };
@@ -439,7 +453,9 @@
     : tab === 'finanzas' && esDir() ? informesPendientes().length : tab === 'convenios' && esDir() ? propuestasConvenio().length : tab === 'encuestas' && !esStaff() ? encuestasPorVotar().length : tab === 'mas' ? TABS[rol()].mas.reduce((s, t) => s + contador(t), 0) : 0);
 
   const BOTON_TITULO = {
-    jugadores: () => esStaff() && '<button class="btn-redondo" data-act="nuevoJugador" aria-label="Inscribir jugador">' + icono('mas2') + '</button>',
+    jugadores: () => esStaff() && (S.verApo ? '<button class="btn-redondo" data-act="nuevoApoderado" aria-label="Nuevo apoderado">' + icono('mas2') + '</button>'
+      : '<button class="btn-redondo" data-act="nuevoJugador" aria-label="Inscribir jugador">' + icono('mas2') + '</button>'),
+    equipo: () => esDir() && '<button class="btn-redondo" data-act="nuevoStaff" aria-label="Agregar entrenador o directiva">' + icono('mas2') + '</button>',
     entrenamientos: () => '<button class="btn-redondo" data-act="nuevoEntrenamiento" aria-label="Programar entrenamiento">' + icono('mas2') + '</button>',
     partidos: () => '<button class="btn-redondo" data-act="nuevoPartido" aria-label="Nuevo partido">' + icono('mas2') + '</button>',
     avisos: () => esStaff() && '<button class="btn-redondo" data-act="nuevoAviso" aria-label="Nuevo aviso">' + icono('mas2') + '</button>',
@@ -448,7 +464,7 @@
       : '<button class="btn-redondo" data-act="proponerConvenio" aria-label="Proponer convenio">' + icono('mas2') + '</button>'),
     finanzas: () => (esDir() ? '<button class="btn-redondo" data-act="nuevoMovimiento" aria-label="Registrar ingreso o gasto">' + icono('mas2') + '</button>'
       : '<button class="btn-redondo" data-act="informarPago" aria-label="Informar un pago">' + icono('mas2') + '</button>'),
-    chat: () => esStaff() && !S.hilo && '<button class="btn-redondo" data-act="nuevoChat" aria-label="Nuevo mensaje">' + icono('mas2') + '</button>',
+    chat: () => esStaff() && !S.hilo && '<button class="btn-redondo" data-act="nuevoChat" aria-label="Nuevo mensaje o grupo">' + icono('mas2') + '</button>',
     fisico: () => esStaff() && '<button class="btn-redondo" data-act="nuevaEvaluacion" aria-label="Nueva evaluación">' + icono('mas2') + '</button>',
     encuestas: () => esStaff() && '<button class="btn-redondo" data-act="nuevaEncuesta" aria-label="Nueva encuesta">' + icono('mas2') + '</button>',
     galeria: () => rol() === 'entrenador' && '<button class="btn-redondo" data-act="nuevoAlbum" aria-label="Subir fotos">' + icono('mas2') + '</button>',
@@ -571,6 +587,8 @@
 
   // ---------- Jugadores ----------
   function vistaJugadores() {
+    const seg = esStaff() ? '<div class="filtros">' + segmentado('verApo', S.verApo ? 1 : 0, [[0, 'Jugadores'], [1, 'Apoderados']]) + '</div>' : '';
+    if (S.verApo) return seg + '<div class="filtros"><input type="search" placeholder="Buscar apoderado o jugador" value="' + h(S.busqueda) + '" data-cambio="busqueda"></div>' + vistaApoderados();
     let lista = filtrarCat(jugadores(S.verInactivos));
     const q = S.busqueda.toLowerCase();
     if (q) lista = lista.filter((j) => j.nombre.toLowerCase().includes(q) || j.rut.includes(q.replace(/\./g, '')));
@@ -580,11 +598,11 @@
       const sinFirma = C.documentosPendientes(S.view, j.rut).some((d) => d.id === 'consentimiento');
       return '<li data-act="verJugador" data-rut="' + j.rut + '">' + (j.foto ? avatarFoto(j, 'camiseta foto') : camiseta(j)) +
         '<div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(etiqueta(j)) + (j.posicion ? ' · ' + h(j.posicion) : '') + '</small>' +
-        '<div class="fila insignias">' + habInsignia(j.rut) + (les ? insignia('Lesión', 'alerta') : '') + (deuda ? insignia(deuda + ' cuota' + (deuda > 1 ? 's' : '') + ' atrasada' + (deuda > 1 ? 's' : ''), 'mal') : '') +
+        '<div class="fila insignias">' + habInsignia(j.rut) + (les && !j.lesionado ? insignia('Lesión reportada', 'alerta') : '') + (deuda ? insignia(deuda + ' cuota' + (deuda > 1 ? 's' : '') + ' atrasada' + (deuda > 1 ? 's' : ''), 'mal') : '') +
         (sinFirma ? insignia(menor(j) ? 'Falta firma del apoderado' : 'Sin consentimiento', 'alerta') : '') + (menor(j) && !apoderados(j.rut).length ? insignia('Sin apoderado', 'mal') : '') + (cuentaEntrenador(j.rut) ? insignia('Entrenador', 'oro') : '') + (j.activo === false ? insignia('Inactivo') : '') + '</div></div>' +
         '<span class="chevron">' + icono('flecha') + '</span></li>';
     }).join('');
-    return '<div class="filtros"><input type="search" placeholder="Buscar por nombre o RUT" value="' + h(S.busqueda) + '" data-cambio="busqueda">' + filtroCategoria() +
+    return seg + '<div class="filtros"><input type="search" placeholder="Buscar por nombre o RUT" value="' + h(S.busqueda) + '" data-cambio="busqueda">' + filtroCategoria() +
       (esDir() ? '<label class="chip"><input type="checkbox" data-cambio="verInactivos"' + (S.verInactivos ? ' checked' : '') + '><span>Ver inactivos</span></label>' : '') + '</div>' +
       seccion(lista.length + ' jugador' + (lista.length === 1 ? '' : 'es'), lista.length ? '<ul class="lista clic">' + filas + '</ul>' : vacio('No hay jugadores con ese filtro.'));
   }
@@ -605,10 +623,51 @@
       campo('Email', input('email', j.email, 'type="email"')) +
       (esDir() ? campo('Descuento / beca (%)', input('descuento', j.descuento || 0, 'type="number" min="0" max="100" inputmode="numeric"')) : '') +
       '</div>' +
-      (nuevo ? '<p class="sub">Apoderado (obligatorio si es menor de 18)</p><p class="ayuda">Se crea su cuenta: entra con su RUT y los 4 primeros dígitos. La cuenta del menor se habilita cuando el apoderado firma el consentimiento.</p>' +
-        '<div class="campos">' + campo('RUT del apoderado', input('apoderadoRut', '', 'placeholder="12.345.678-9" data-rut')) + campo('Nombre del apoderado', input('apoderadoNombre', '', 'maxlength="80"')) +
-        campo('Teléfono', input('apoderadoTelefono', '', 'type="tel"')) + campo('Email', input('apoderadoEmail', '', 'type="email"')) + '</div>' : '') +
+      (nuevo ? '<p class="sub">Apoderado (obligatorio si es menor de 18)</p>' + camposApoderado() +
+        '<p class="ayuda">Puedes agregar más apoderados después, desde la ficha del jugador. La cuenta del menor se habilita cuando un apoderado con RUT entra y firma el consentimiento.</p>' : '') +
       pie(nuevo ? 'Inscribir jugador' : 'Guardar') + '</form>';
+  }
+
+  // ---------- Apoderados ----------
+  const todosApoderados = () => S.view.usuarios.filter((u) => u.rol === 'apoderado' && u.activo !== false).sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+  // Elegir un apoderado que ya existe o crear uno nuevo (basta el nombre; el RUT es para que pueda entrar).
+  function camposApoderado(excluir) {
+    const existentes = todosApoderados().filter((a) => !(excluir || []).includes(a.rut));
+    return (existentes.length ? campo('Apoderado', '<select name="apoderadoId" data-apo-elegir><option value="">Nuevo apoderado</option>' + existentes.map((a) => '<option value="' + h(a.rut) + '">' + h(a.nombre) + (C.apoderadoSinRut(a) ? ' (sin RUT)' : ' · ' + h(C.formatearRut(a.rut))) + '</option>').join('') + '</select>') : '') +
+      '<div class="campos" data-apo-nuevo>' + campo('Nombre del apoderado', input('apoderadoNombre', '', 'maxlength="80"')) + campo('RUT (opcional)', input('apoderadoRut', '', 'placeholder="12.345.678-9" data-rut')) +
+      campo('Teléfono', input('apoderadoTelefono', '', 'type="tel"')) + campo('Email', input('apoderadoEmail', '', 'type="email"')) + '</div>' +
+      '<p class="ayuda" data-apo-nuevo>Sin RUT queda creado sólo con el nombre. Para entrar a la app necesita su RUT: entra con él y los 4 primeros dígitos.</p>';
+  }
+
+  function vistaApoderados() {
+    const q = S.busqueda.toLowerCase();
+    let lista = todosApoderados();
+    if (q) lista = lista.filter((a) => a.nombre.toLowerCase().includes(q) || (a.hijos || []).some((r) => (usuario(r) || { nombre: '' }).nombre.toLowerCase().includes(q)));
+    const filas = lista.map((a) => {
+      const hijos = (a.hijos || []).map(usuario).filter(Boolean);
+      const sinRut = C.apoderadoSinRut(a);
+      return '<li data-act="editarApoderado" data-id="' + h(a.rut) + '"><span class="avatar-chat">' + h(iniciales(a.nombre)) + '</span><div class="crece"><b>' + h(a.nombre) + '</b>' +
+        '<small>' + (hijos.length ? 'Apoderado de ' + hijos.map((j) => h(j.nombre.split(/\s+/).slice(0, 2).join(' '))).join(', ') : 'Sin jugadores asignados') + '</small>' +
+        '<div class="fila insignias">' + (sinRut ? insignia('Sin RUT · aún no entra', 'alerta') : insignia(C.formatearRut(a.rut))) + (a.telefono ? insignia(a.telefono) : '') + '</div></div><span class="chevron">' + icono('flecha') + '</span></li>';
+    }).join('');
+    return seccion(lista.length + ' apoderado' + (lista.length === 1 ? '' : 's'), lista.length ? '<ul class="lista clic">' + filas + '</ul>' : vacio(q ? 'No hay apoderados con esa búsqueda.' : 'Aún no hay apoderados. Créalos con el botón +, basta el nombre.'), '',
+      'Un jugador puede tener más de un apoderado. Sin RUT el apoderado queda creado, pero no puede entrar ni firmar.');
+  }
+
+  function formApoderado(a) {
+    const nuevo = !a;
+    a = a || { hijos: [] };
+    const sinRut = nuevo || C.apoderadoSinRut(a);
+    const otros = (j) => apoderados(j.rut).filter((x) => x.rut !== a.rut).length;
+    const js = jugadores().slice().sort((x, y) => (menor(y) - menor(x)) || x.categoria.localeCompare(y.categoria) || x.nombre.localeCompare(y.nombre));
+    return '<form id="form-modal">' + (nuevo ? '' : '<input type="hidden" name="id" value="' + h(a.rut) + '">') +
+      campo('Nombre', input('nombre', a.nombre, 'required maxlength="80"')) +
+      '<div class="campos">' + (sinRut ? campo('RUT (opcional)', input('rut', '', 'placeholder="12.345.678-9" data-rut')) : campo('RUT', '<input value="' + h(C.formatearRut(a.rut)) + '" disabled>')) +
+      campo('Teléfono', input('telefono', a.telefono, 'type="tel"')) + campo('Email', input('email', a.email, 'type="email"')) + '</div>' +
+      (sinRut ? '<p class="ayuda">Puedes crearlo sólo con el nombre. Cuando le agregues el RUT podrá entrar (clave: los 4 primeros dígitos) y firmar por sus hijos.</p>' : '') +
+      '<p class="sub">Jugadores a su cargo</p><div class="tarjeta lista-chequeo"><ul class="lista">' + js.map((j) => '<li><label class="check-citar"><input type="checkbox" name="hijos[]" value="' + h(j.rut) + '"' + ((a.hijos || []).includes(j.rut) ? ' checked' : '') + '><span class="marca"></span><div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(etiqueta(j)) + (menor(j) ? ' · menor de edad' : '') + (otros(j) ? ' · ya tiene ' + otros(j) + ' apoderado' + (otros(j) > 1 ? 's' : '') : '') + '</small></div></label></li>').join('') + '</ul></div>' +
+      pie(nuevo ? 'Crear apoderado' : 'Guardar', nuevo ? '' : '<button type="button" class="btn ancho peligro" data-act="borrarApoderado" data-id="' + h(a.rut) + '">' + (C.apoderadoSinRut(a) ? 'Eliminar apoderado' : 'Desactivar cuenta') + '</button>') + '</form>';
   }
 
   function fichaJugador(rut) {
@@ -623,23 +682,25 @@
       fila('Teléfono', h(j.telefono || '–')) + fila('Email', h(j.email || '–')) +
       fila('Asistencia ' + ANIO, a.asistidos + ' de ' + a.realizados + ' (' + a.porcentaje + '%)') +
       fila('Federativo ' + ANIO, C.federativoPagado(S.view, rut, ANIO) ? insignia('Pagado', 'ok') : insignia('Pendiente', 'mal'));
+    const estadoHtml = esStaff() ? '<h3 class="sub">Estado</h3><div class="tarjeta">' + selectorEstado(j) + '</div>' : '';
     if (esDir()) {
       const deuda = C.mesesAdeudados(S.view, rut, ANIO).filter((m) => estadoMes(rut, ANIO, m) === 'vencido');
       html += fila('Cuota mensual', clp(C.cuotaDe(S.view, j)) + (j.descuento ? ' (' + j.descuento + '% beca)' : '')) +
         fila('Cuotas atrasadas', deuda.length ? deuda.map((m) => C.MESES[m]).join(', ') : 'Al día');
     }
     html += docs.map((d) => { const f = C.firmaDe(S.view, rut, d); return fila(d.titulo, f ? insignia('Firmado ' + fCorta(f.fecha), 'ok') : insignia('Pendiente', 'alerta')); }).join('');
-    html += '</ul></div>';
+    html += '</ul></div>' + estadoHtml;
     // Apoderados: obligatorios para menores; su cuenta firma y gestiona por el jugador.
     const aps = apoderados(rut);
     html += '<h3 class="sub">Apoderado' + (aps.length > 1 ? 's' : '') + '</h3><div class="tarjeta">' + (aps.length ? '<ul class="lista">' + aps.map((a) => {
       const wa = telWa(a.telefono);
-      return '<li class="envolver"><div class="crece"><b>' + h(a.nombre) + '</b><small>' + h(C.formatearRut(a.rut)) + (a.telefono ? ' · ' + h(a.telefono) : '') + (a.email ? ' · ' + h(a.email) : '') + '</small>' +
-        '<div class="fila insignias">' + (a.claveInicial ? insignia('Clave inicial') : insignia('Ya entró', 'ok')) + (wa ? '<a class="btn mini" href="https://wa.me/' + wa + '" target="_blank" rel="noopener noreferrer">WhatsApp</a>' : '') +
-        (esDir() ? '<button class="btn mini" data-act="resetClave" data-rut="' + a.rut + '">Restablecer clave</button>' : '') +
+      const sinRut = C.apoderadoSinRut(a);
+      return '<li class="envolver"><div class="crece"><b>' + h(a.nombre) + '</b><small>' + (sinRut ? 'Sin RUT' : h(C.formatearRut(a.rut))) + (a.telefono ? ' · ' + h(a.telefono) : '') + (a.email ? ' · ' + h(a.email) : '') + '</small>' +
+        '<div class="fila insignias">' + (sinRut ? insignia('Aún no entra', 'alerta') + '<button class="btn mini" data-act="editarApoderado" data-id="' + h(a.rut) + '" data-volver="' + h(rut) + '">Agregar RUT</button>' : a.claveInicial ? insignia('Clave inicial') : insignia('Ya entró', 'ok')) + (wa ? '<a class="btn mini" href="https://wa.me/' + wa + '" target="_blank" rel="noopener noreferrer">WhatsApp</a>' : '') +
+        (esDir() && !sinRut ? '<button class="btn mini" data-act="resetClave" data-rut="' + a.rut + '">Restablecer clave</button>' : '') +
         '<button class="btn mini peligro" data-act="quitarApoderado" data-rut="' + rut + '" data-apoderado="' + a.rut + '">Quitar</button></div></div></li>';
     }).join('') + '</ul>' : vacio(menor(j) ? 'Es menor de edad y no tiene apoderado: su cuenta no se habilita hasta que el apoderado firme.' : 'Sin apoderado (no es obligatorio para mayores de edad).')) +
-      '<button class="btn ancho" data-act="agregarApoderado" data-rut="' + rut + '">+ Agregar apoderado</button></div>';
+      '<button class="btn ancho" data-act="agregarApoderado" data-rut="' + rut + '">' + icono('mas2') + (aps.length ? ' Agregar otro apoderado' : ' Agregar apoderado') + '</button></div>';
     // Ficha médica: sólo la ve el cuerpo técnico (no la directiva).
     if (rol() === 'entrenador') html += '<h3 class="sub">Ficha médica</h3><div class="tarjeta">' + vistaFichaMedica(j) + '<button class="btn ancho" data-act="fichaMedica" data-rut="' + rut + '">Editar ficha médica</button></div>';
     const est = C.estadisticasJugador(S.view, rut, ANIO);
@@ -864,7 +925,7 @@
   const reservas = (m) => jugadores().filter((j) => j.categoria === m.categoria && !(m.citados || {})[j.rut]).sort((a, b) => salio(m, a.rut) - salio(m, b.rut));
   const rechazados = (m) => Object.keys(m.citados || {}).filter((r) => m.citados[r] === 'rechazado');
   const puedeCambiar = (m) => esStaff() && m.fecha >= HOY && !m.resultado;
-  const notaJugador = (j, m) => [m && salio(m, j.rut) ? 'avisó que no puede' : '', !hab(j.rut) ? 'no habilitado' : '', lesionesActivas(j.rut).length ? 'lesión' : ''].filter(Boolean).join(' · ');
+  const notaJugador = (j, m) => [m && salio(m, j.rut) ? 'avisó que no puede' : '', j.lesionado ? 'lesionado' : lesionesActivas(j.rut).length ? 'lesión reportada' : '', !hab(j.rut) ? 'no habilitado' : ''].filter(Boolean).join(' · ');
 
   function bloqueReserva(m) {
     if (!esStaff() || !puedeCambiar(m) || !Object.keys(m.citados || {}).length) return '';
@@ -877,7 +938,11 @@
   function formReemplazo(m, sale) {
     const salen = sale ? [sale] : rechazados(m);
     const rs = reservas(m);
-    const opciones = '<option value="">Elegir de la reserva</option>' + rs.map((j) => '<option value="' + j.rut + '">' + (j.numero != null ? '#' + h(j.numero) + ' ' : '') + h(j.nombre) + (j.posicion ? ' · ' + h(j.posicion) : '') + (notaJugador(j, m) ? ' (' + notaJugador(j, m) + ')' : '') + '</option>').join('');
+    const op = (j) => '<option value="' + j.rut + '">' + (j.numero != null ? '#' + h(j.numero) + ' ' : '') + h(j.nombre) + (j.posicion ? ' · ' + h(j.posicion) : '') + (notaJugador(j, m) ? ' (' + notaJugador(j, m) + ')' : '') + '</option>';
+    // Además de la reserva, puede entrar alguien de las categorías que permite la nómina.
+    const otras = C.categoriasNomina(S.view, m.categoria).slice(1).map((c) => [c, jugadores().filter((j) => j.categoria === c && !m.citados[j.rut])]).filter(([, l]) => l.length);
+    const opciones = '<option value="">Elegir de la reserva</option><optgroup label="Reserva ' + h(m.categoria) + '">' + rs.map(op).join('') + '</optgroup>' +
+      otras.map(([c, l]) => '<optgroup label="' + h(c) + '">' + l.map(op).join('') + '</optgroup>').join('');
     const filas = salen.map((r) => {
       const u = usuario(r) || { nombre: '?' };
       return '<li class="cambio"><div class="cambio-sale"><span class="etq">Sale</span><b>' + (u.numero != null ? '#' + h(u.numero) + ' ' : '') + h(u.nombre) + '</b>' + insignia('No puede', 'mal') + '</div>' +
@@ -885,7 +950,7 @@
         '<label class="cambio-entra"><span class="etq">Entra</span><select name="e_' + r + '">' + opciones + '</select></label></li>';
     }).join('');
     return '<p class="ayuda">vs ' + h(m.rival) + ' · ' + h(fLarga(m.fecha)) + ' · ' + h(m.categoria) + '</p>' +
-      (rs.length ? '<form id="form-modal"><ul class="lista cambios">' + filas + '</ul>' +
+      (rs.length || otras.length ? '<form id="form-modal"><ul class="lista cambios">' + filas + '</ul>' +
         '<p class="ayuda">Quien entra queda citado y recibe el aviso para confirmar. Quien sale vuelve a la reserva.</p>' + pie('Hacer el cambio') + '</form>'
         : vacio('No hay jugadores en reserva en ' + m.categoria + '. Puedes citar de otra categoría con "Editar citados".') +
           '<div class="modal-pie"><button class="btn ancho" data-act="citar" data-id="' + m.id + '">Editar citados</button></div>');
@@ -920,10 +985,102 @@
       '<div class="modal-pie columna">' +
       (esStaff() && puedeCambiar(m) && rechazados(m).length ? '<button class="btn primario ancho" data-act="reemplazar" data-id="' + m.id + '">' + icono('cambiar') + ' Cambiar a ' + (rechazados(m).length > 1 ? 'los ' + rechazados(m).length + ' que no pueden' : 'quien no puede') + '</button>' : '') +
       (m.miCitacion ? '<div class="fila" style="gap:8px"><button class="btn primario crece" data-act="responder" data-id="' + m.id + '" data-r="confirmado">Voy ✓</button><button class="btn crece" data-act="responder" data-id="' + m.id + '" data-r="rechazado">No puedo</button></div>' : '') +
+      '<button class="btn ancho tonal" data-act="sticker" data-id="' + m.id + '">' + icono('sticker') + ' Sticker para historias</button>' +
       '<button class="btn ancho" data-act="pdfConvocatoria" data-id="' + m.id + '">' + icono('pdf') + ' Descargar PDF</button>' +
       '<button class="btn ancho" data-act="copiarConvocatoria" data-id="' + m.id + '">' + icono('copiar') + ' Copiar texto para WhatsApp</button>' +
       (navigator.share ? '<button class="btn ancho" data-act="compartirConvocatoria" data-id="' + m.id + '">' + icono('compartir') + ' Compartir</button>' : '') +
       (esStaff() ? '<button class="btn ancho" data-act="citar" data-id="' + m.id + '">Editar citados</button>' : '') + '</div>';
+  }
+
+  // ---------- Sticker de la nómina para historias ----------
+  // PNG con fondo transparente: una tarjeta que se pone encima de la foto en la historia.
+  function cargarImagen(src) {
+    return new Promise((ok) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ok(null); i.src = src; });
+  }
+
+  async function dibujarSticker(m, claro) {
+    const lista = nombresConvocados(m);
+    const ct = lineasCuerpoTecnico(m);
+    const W = 900, P = 56, fuente = '"Roboto Flex", Roboto, system-ui, -apple-system, "Segoe UI", Arial, sans-serif';
+    const colsDos = lista.length > 9;
+    const filasJug = colsDos ? Math.ceil(lista.length / 2) : lista.length;
+    const H = 260 + filasJug * 54 + (ct.length ? 90 + ct.length * 40 : 0) + 40;
+    const c = document.createElement('canvas');
+    const esc = 2;
+    c.width = W * esc; c.height = H * esc;
+    const x = c.getContext('2d');
+    x.scale(esc, esc);
+    const col = claro ? { fondo: 'rgba(255,255,255,.94)', texto: '#191B23', suave: '#454752', acento: '#1F3E94', num: '#B3141E', linea: 'rgba(31,62,148,.18)' }
+      : { fondo: 'rgba(11,26,74,.90)', texto: '#FFFFFF', suave: 'rgba(255,255,255,.78)', acento: '#FFD34D', num: '#FFD34D', linea: 'rgba(255,255,255,.22)' };
+    const r = 44;
+    const caja = () => { x.beginPath(); x.moveTo(r, 0); x.arcTo(W, 0, W, H, r); x.arcTo(W, H, 0, H, r); x.arcTo(0, H, 0, 0, r); x.arcTo(0, 0, W, 0, r); x.closePath(); };
+    caja(); x.fillStyle = col.fondo; x.fill();
+    // Franja tricolor del club arriba.
+    x.save(); caja(); x.clip();
+    [['#C4161C', 0], ['#E0A81E', 1], ['#3E63CF', 2]].forEach(([k, i]) => { x.fillStyle = k; x.fillRect(i * W / 3, 0, W / 3 + 1, 14); });
+    x.restore();
+    const logo = await cargarImagen(ESCUDO);
+    if (logo) { const lh = 120, lw = lh * (logo.naturalWidth / logo.naturalHeight || 1); x.drawImage(logo, P, 44, lw, lh); }
+    x.textBaseline = 'alphabetic';
+    x.fillStyle = col.acento; x.font = '700 26px ' + fuente; x.fillText('VIEUX GAULOIS HANDBALL', P + 140, 84);
+    x.fillStyle = col.texto; x.font = '800 46px ' + fuente;
+    const cat = m.categoria.toUpperCase();
+    let tam = 46; while (x.measureText(cat).width > W - P - 140 - P && tam > 26) { tam -= 2; x.font = '800 ' + tam + 'px ' + fuente; }
+    x.fillText(cat, P + 140, 134);
+    x.fillStyle = col.suave; x.font = '500 26px ' + fuente;
+    const d = fDia(m.fecha);
+    const dia = d.toLocaleDateString('es-CL', { weekday: 'short', day: '2-digit', month: '2-digit' });
+    x.fillText('vs ' + m.rival + ' · ' + dia + (m.hora ? ' · ' + m.hora : ''), P + 140, 172);
+    x.fillStyle = col.linea; x.fillRect(P, 210, W - 2 * P, 2);
+    x.fillStyle = col.acento; x.font = '700 24px ' + fuente; x.fillText('NÓMINA', P, 256);
+    const anchoCol = colsDos ? (W - 2 * P) / 2 : W - 2 * P;
+    lista.forEach((j, i) => {
+      const cx = P + (colsDos && i >= filasJug ? anchoCol : 0);
+      const cy = 304 + (colsDos ? i % filasJug : i) * 54;
+      x.fillStyle = col.num; x.font = '800 30px ' + fuente;
+      x.textAlign = 'right'; x.fillText(j.numero != null ? String(j.numero) : '–', cx + 44, cy); x.textAlign = 'left';
+      x.fillStyle = col.texto; x.font = '600 30px ' + fuente;
+      let nombre = j.nombre;
+      while (x.measureText(nombre).width > anchoCol - 80 && nombre.length > 4) nombre = nombre.slice(0, -2) + '…';
+      x.fillText(nombre, cx + 62, cy);
+    });
+    let y = 304 + filasJug * 54;
+    if (ct.length) {
+      x.fillStyle = col.linea; x.fillRect(P, y - 10, W - 2 * P, 2);
+      x.fillStyle = col.acento; x.font = '700 24px ' + fuente; x.fillText('CUERPO TÉCNICO', P, y + 40);
+      x.font = '500 28px ' + fuente; x.fillStyle = col.texto;
+      ct.forEach((t, i) => x.fillText(t, P, y + 86 + i * 40));
+    }
+    return c;
+  }
+
+  async function abrirSticker(id) {
+    const m = partido(id);
+    const c = await dibujarSticker(m, S.stickerClaro);
+    abrirModal('Sticker para historias', '<div class="sticker-vista"><img src="' + c.toDataURL('image/png') + '" alt="Sticker con la nómina vs ' + h(m.rival) + '"></div>' +
+      '<div class="estado-sel">' + [['oscuro', 'Azul'], ['claro', 'Blanco']].map(([v, t]) => '<button type="button" class="' + ((S.stickerClaro ? 'claro' : 'oscuro') === v ? 'activo' : '') + '" data-act="stickerEstilo" data-id="' + m.id + '" data-v="' + v + '">' + ((S.stickerClaro ? 'claro' : 'oscuro') === v ? icono('check') : '') + t + '</button>').join('') + '</div>' +
+      '<p class="ayuda">Imagen PNG con fondo transparente, lista para ir encima de la foto. En WhatsApp: crea tu estado con la foto, copia el sticker y pégalo encima. También puedes descargarlo o compartirlo.</p>' +
+      '<div class="modal-pie columna">' + (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write ? '<button class="btn primario ancho" data-act="stickerCompartir" data-id="' + m.id + '" data-modo="copiar">' + icono('copiar') + ' Copiar sticker</button>' : '') +
+      (navigator.share ? '<button class="btn ancho tonal" data-act="stickerCompartir" data-id="' + m.id + '" data-modo="compartir">' + icono('compartir') + ' Compartir</button>' : '') +
+      '<button class="btn ancho" data-act="stickerCompartir" data-id="' + m.id + '" data-modo="descargar">' + icono('guardar') + ' Descargar PNG</button></div>');
+  }
+
+  async function compartirSticker(m, modo) {
+    const c = await dibujarSticker(m, S.stickerClaro);
+    const blob = await new Promise((ok) => c.toBlob(ok, 'image/png'));
+    const nombre = 'nomina-' + m.categoria.toLowerCase().replace(/\s+/g, '-') + '-' + m.fecha + '.png';
+    try {
+      if (modo === 'copiar') { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); toast('Sticker copiado: pégalo sobre tu foto', 'ok'); return; }
+      if (modo === 'compartir') {
+        const f = new File([blob], nombre, { type: 'image/png' });
+        if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f] }); return; }
+      }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Sticker descargado', 'ok');
   }
 
   // El PDF se genera con el diálogo de impresión del sistema ("Guardar como PDF").
@@ -984,19 +1141,27 @@
       pie(nuevo ? 'Crear partido' : 'Guardar', nuevo ? '' : '<button type="button" class="btn ancho peligro" data-act="borrarPartido" data-id="' + m.id + '">Eliminar partido</button>') + '</form>';
   }
 
-  function formCitacion(m, todas) {
-    const js = jugadores().filter((j) => todas || j.categoria === m.categoria || m.citados[j.rut]);
-    const filas = js.map((j) => {
+  // Nómina: la categoría del partido y una por debajo; los adultos, desde Juvenil hacia arriba.
+  function formCitacion(m) {
+    const cats = C.categoriasNomina(S.view, m.categoria);
+    const js = jugadores().filter((j) => cats.includes(j.categoria) || m.citados[j.rut]);
+    const grupos = cats.concat(Array.from(new Set(js.map((j) => j.categoria).filter((c) => !cats.includes(c)))));
+    const fila = (j) => {
       const les = lesionesActivas(j.rut).length;
       return '<li><label class="check-citar"><input type="checkbox" name="ruts[]" value="' + j.rut + '"' + (m.citados[j.rut] ? ' checked' : '') + ' data-hab="' + (hab(j.rut) ? 1 : 0) + '"><span class="marca"></span>' +
         '<div class="crece"><b>' + (j.numero != null ? '#' + h(j.numero) + ' ' : '') + h(j.nombre) + '</b><small>' + h(etiqueta(j)) + (j.posicion ? ' · ' + h(j.posicion) : '') + '</small>' +
-        '<div class="fila insignias">' + habInsignia(j.rut) + (les ? insignia('Lesión', 'alerta') : '') + '</div></div></label></li>';
+        '<div class="fila insignias">' + habInsignia(j.rut) + (les && !j.lesionado ? insignia('Lesión reportada', 'alerta') : '') + '</div></div></label></li>';
+    };
+    // Las categorías de refuerzo sin jugadores no se muestran.
+    const bloques = grupos.filter((c, i) => i === 0 || js.some((j) => j.categoria === c)).map((c, i) => {
+      const lista = js.filter((j) => j.categoria === c);
+      const n = lista.filter((j) => m.citados[j.rut]).length;
+      return '<p class="sub nomina-cat">' + h(c) + (i === 0 ? '' : cats.includes(c) ? ' · refuerzo' : ' · ya citados') + '<span>' + (n ? n + ' citado' + (n > 1 ? 's' : '') : '') + '</span></p>' +
+        '<div class="tarjeta"><ul class="lista">' + (lista.length ? lista.map(fila).join('') : '<li>' + vacio('No hay jugadores en esta categoría.') + '</li>') + '</ul></div>';
     }).join('');
     return '<p class="ayuda">vs ' + h(m.rival) + ' · ' + h(fLarga(m.fecha)) + ' · ' + h(m.categoria) + '</p>' +
-      '<div class="aviso info">Sólo los jugadores <b>habilitados</b> (federativo ' + ANIO + ' pagado) pueden jugar.</div>' +
-      '<form id="form-modal"><input type="hidden" name="id" value="' + m.id + '">' +
-      (todas ? '' : '<button type="button" class="btn-texto" data-act="citarTodas" data-id="' + m.id + '">Mostrar todas las categorías</button>') +
-      '<div class="tarjeta"><ul class="lista">' + (filas || '<li>' + vacio('No hay jugadores en esta categoría.') + '</li>') + '</ul></div>' +
+      '<div class="aviso info">Puedes citar de <b>' + h(cats.join(', ')) + '</b>. Sólo los jugadores <b>habilitados</b> (federativo ' + ANIO + ' pagado y sin lesión) deberían jugar.</div>' +
+      '<form id="form-modal"><input type="hidden" name="id" value="' + m.id + '">' + bloques +
       '<div class="aviso mal" id="aviso-hab" hidden></div>' +
       '<p class="sub">Cuerpo técnico (opcional)</p><p class="ayuda">Completa sólo los que van; los vacíos no aparecen en la convocatoria.</p>' +
       '<datalist id="nombres-staff">' + S.view.usuarios.filter((u) => esPersonal(u) && u.activo !== false).map((u) => '<option value="' + h(u.nombre) + '">').join('') + '</datalist>' +
@@ -1145,18 +1310,21 @@
   }
 
   // ---------- Ajustes (directiva) ----------
-  function vistaAjustes() {
-    const cfg = S.view.config;
+  // ---------- Directiva y entrenadores ----------
+  function vistaEquipo() {
     const staff = S.view.usuarios.filter(esPersonal).sort((a, b) => a.rol.localeCompare(b.rol) || a.nombre.localeCompare(b.nombre));
-    const bloqueStaff =      seccion('Directiva y entrenadores', '<ul class="lista">' + staff.map((u) => {
+    return '<p class="intro">Cuentas de la directiva y del cuerpo técnico. Cada uno entra con su usuario y clave.</p>' + seccion(staff.length + ' cuentas', '<ul class="lista">' + staff.map((u) => {
         const j = u.jugadorRut && usuario(u.jugadorRut);
         return '<li class="envolver"><div class="crece"><b>' + h(u.nombre) + '</b><small>Usuario: ' + h(u.usuario || u.rut) + ' · ' + h(u.cargo || u.rol) + (j ? ' · también juega en ' + h(j.categoria) : '') + '</small>' +
           '<div class="fila insignias">' + insignia(u.rol === 'directiva' ? 'Directiva' : 'Entrenador', u.rol === 'directiva' ? 'oro' : '') + (u.activo === false ? insignia('Inactivo', 'mal') : '') +
           (u.rut !== S.view.yo ? '<button class="btn mini" data-act="definirClave" data-rut="' + u.rut + '">Clave</button><button class="btn mini peligro" data-act="activoStaff" data-rut="' + u.rut + '" data-activo="' + (u.activo === false ? '1' : '') + '">' + (u.activo === false ? 'Activar' : 'Desactivar') + '</button>' : '') + '</div></div></li>';
       }).join('') + '</ul>' +
-        '<button class="btn primario ancho" data-act="nuevoStaff" style="margin-top:12px">' + icono('mas2') + ' Agregar entrenador o directiva</button>', btnTexto('Agregar', 'nuevoStaff'), 'Cada uno entra con su usuario y clave.');
-    return bloqueStaff +
-      seccion('Precios de cuotas', '<form data-form="config" class="form-interno"><div class="campos">' + cfg.categoriasBase.map((b) => campo(b + ' (M y F)', '<input name="cuota_' + h(b) + '" type="number" min="0" step="500" inputmode="numeric" value="' + (cfg.cuotas[b] || 0) + '">')).join('') + '</div>' +
+        '<button class="btn primario ancho" data-act="nuevoStaff" style="margin-top:12px">' + icono('mas2') + ' Agregar entrenador o directiva</button>', btnTexto('Agregar', 'nuevoStaff'), 'Cada uno entra con su usuario y clave. Los apoderados se crean en Jugadores → Apoderados.');
+  }
+
+  function vistaAjustes() {
+    const cfg = S.view.config;
+    return seccion('Precios de cuotas', '<form data-form="config" class="form-interno"><div class="campos">' + cfg.categoriasBase.map((b) => campo(b + ' (M y F)', '<input name="cuota_' + h(b) + '" type="number" min="0" step="500" inputmode="numeric" value="' + (cfg.cuotas[b] || 0) + '">')).join('') + '</div>' +
       '<div class="campos">' + campo('Monto federativo anual', input('montoFederativo', cfg.montoFederativo, 'type="number" min="0" step="500" inputmode="numeric"')) +
       campo('Día de vencimiento', input('diaVencimiento', cfg.diaVencimiento, 'type="number" min="1" max="28" inputmode="numeric"')) + '</div>' +
       '<p class="etiqueta">Meses que se cobran</p><div class="chequeos">' + C.MESES.map((m, i) => '<label class="chip"><input type="checkbox" name="mesesCobro[]" value="' + i + '"' + (cfg.mesesCobro.includes(i) ? ' checked' : '') + '><span>' + m + '</span></label>').join('') + '</div>' +
@@ -1342,6 +1510,7 @@
     // Conversaciones que siempre aparecen aunque estén vacías.
     if (yoU.rol === 'jugador') { hilos['dir:' + yoU.rut] = hilos['dir:' + yoU.rut] || []; hilos['ent:' + yoU.rut] = hilos['ent:' + yoU.rut] || []; }
     if (yoU.rol === 'entrenador') hilos['dir:' + yoU.rut] = hilos['dir:' + yoU.rut] || [];
+    (S.view.grupos || []).forEach((g) => { hilos['grp:' + g.id] = hilos['grp:' + g.id] || []; });
     if (S.hilo && !hilos[S.hilo]) hilos[S.hilo] = [];
     return Object.keys(hilos).map((k) => ({ hilo: k, msjs: hilos[k].sort((a, b) => a.fecha.localeCompare(b.fecha)) }))
       .sort((a, b) => (b.msjs.length ? b.msjs[b.msjs.length - 1].fecha : '').localeCompare(a.msjs.length ? a.msjs[a.msjs.length - 1].fecha : ''));
@@ -1349,13 +1518,23 @@
   const noLeidos = (msjs) => msjs.filter((m) => !m.leidoPor.includes(yoId())).length;
   const chatSinLeer = () => (S.view.mensajes || []).filter((m) => !m.leidoPor.includes(yoId())).length;
 
+  const grupoDe = (hilo) => (String(hilo).startsWith('grp:') ? (S.view.grupos || []).find((g) => g.id === hilo.slice(4)) : null);
+  // Integrantes de un grupo como usuarios (en la vista del jugador vienen con nombre).
+  const miembrosGrupo = (g) => g.miembros.map((m) => (typeof m === 'string' ? usuario(m) || { rut: m, nombre: '?' } : m));
+  const autorMsj = (rut) => usuario(rut) || (S.view.grupos || []).reduce((x, g) => x || miembrosGrupo(g).find((m) => m.rut === rut), null);
+  const puedoEditarGrupo = (g) => esDir() || g.creador === yoId();
+
   function tituloHilo(hilo) {
+    const g = grupoDe(hilo);
+    if (g) return g.nombre;
     const [tipo, id] = [hilo.slice(0, 3), hilo.slice(4)];
     const otro = usuario(id);
     if (tipo === 'dir') return esDir() ? (otro ? otro.nombre : '?') : 'Directiva';
     return rol() === 'jugador' ? 'Entrenadores' : (otro ? otro.nombre : '?');
   }
   function subtituloHilo(hilo) {
+    const g = grupoDe(hilo);
+    if (g) return 'Grupo · ' + g.miembros.length + ' integrantes';
     const [tipo, id] = [hilo.slice(0, 3), hilo.slice(4)];
     const otro = usuario(id);
     if (rol() === 'jugador') return tipo === 'dir' ? 'Cuotas, pagos, documentos y temas del club' : 'Tus entrenadores';
@@ -1375,7 +1554,7 @@
       let ultimoDia = '';
       const burbujas = msjs.map((m) => {
         const mio = m.de === yoId();
-        const autor = usuario(m.de);
+        const autor = autorMsj(m.de);
         const dia = m.fecha.slice(0, 10);
         const fechaDia = new Date(m.fecha).toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
         const sep = dia !== ultimoDia ? '<div class="chat-dia">' + h(fechaDia.charAt(0).toUpperCase() + fechaDia.slice(1)) + '</div>' : '';
@@ -1383,7 +1562,9 @@
         return sep + '<div class="burbuja' + (mio ? ' mia' : '') + '">' + (!mio ? '<b>' + h(autor ? autor.nombre : '?') + (autor && autor.rol === 'apoderado' ? ' · apoderado' : autor && autor.rol !== 'jugador' ? ' · ' + h(autor.cargo || autor.rol) : '') + '</b>' : '') +
           '<p>' + h(m.texto).replace(/\n/g, '<br>') + '</p><small>' + h(horaMsj(m.fecha)) + '</small></div>';
       }).join('');
-      return '<p class="intro">' + h(subtituloHilo(S.hilo)) + '</p>' +
+      const g = grupoDe(S.hilo);
+      return (g ? '<button class="grupo-cab" data-act="verGrupo" data-id="' + h(g.id) + '"><span class="avatar-chat grupo">' + icono('grupo') + '</span><span class="crece"><b>' + h(subtituloHilo(S.hilo)) + '</b><small>' + h(miembrosGrupo(g).slice(0, 6).map((u) => u.nombre.split(/\s+/)[0]).join(', ') + (g.miembros.length > 6 ? '…' : '')) + '</small></span><span class="chevron">' + icono('flecha') + '</span></button>'
+        : '<p class="intro">' + h(subtituloHilo(S.hilo)) + '</p>') +
         '<div class="chat" id="chat-msjs">' + (burbujas || vacio('Escribe el primer mensaje.')) + '</div>' +
         '<form id="form-chat" class="chat-caja"><textarea id="chat-texto" name="texto" rows="1" maxlength="1000" placeholder="Escribe un mensaje" required>' + h(S.borrador[S.hilo] || '') + '</textarea>' +
         '<button class="btn-enviar" aria-label="Enviar">' + icono('enviar') + '</button></form>';
@@ -1395,8 +1576,10 @@
       const n = noLeidos(msjs);
       const tit = tituloHilo(hilo);
       const ini = hilo.startsWith('dir:') && !esDir() ? 'VG' : tit.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
-      return '<li data-act="abrirHilo" data-hilo="' + h(hilo) + '"><span class="avatar-chat' + (hilo.startsWith('dir:') ? ' dir' : '') + '">' + h(ini) + '</span><div class="crece"><b>' + h(tit) + '</b>' +
-        '<small>' + (ult ? (ult.de === yoId() ? 'Tú: ' : '') + h(ult.texto.slice(0, 80)) : h(subtituloHilo(hilo))) + '</small></div>' +
+      const esGrupo = hilo.startsWith('grp:');
+      const autorUlt = ult && esGrupo && ult.de !== yoId() ? (autorMsj(ult.de) || { nombre: '?' }).nombre.split(/\s+/)[0] + ': ' : '';
+      return '<li data-act="abrirHilo" data-hilo="' + h(hilo) + '"><span class="avatar-chat' + (hilo.startsWith('dir:') ? ' dir' : esGrupo ? ' grupo' : '') + '">' + (esGrupo ? icono('grupo') : h(ini)) + '</span><div class="crece"><b>' + h(tit) + '</b>' +
+        '<small>' + (ult ? (ult.de === yoId() ? 'Tú: ' : h(autorUlt)) + h(ult.texto.slice(0, 80)) : h(subtituloHilo(hilo))) + '</small></div>' +
         '<div class="chat-meta">' + (ult ? '<small>' + h(horaMsj(ult.fecha)) + '</small>' : '') + (n ? '<i class="punto">' + n + '</i>' : '') + '</div></li>';
     }).join('') + '</ul>' : vacio('Aún no hay conversaciones.'));
   }
@@ -1407,7 +1590,36 @@
       ? '<optgroup label="Entrenadores">' + S.view.usuarios.filter((u) => u.rol === 'entrenador' && u.activo !== false).map((u) => '<option value="dir:' + h(u.rut) + '">' + h(u.nombre) + '</option>').join('') + '</optgroup>' +
         '<optgroup label="Jugadores">' + js.map((j) => '<option value="dir:' + h(j.rut) + '">' + h(j.nombre) + ' · ' + h(j.categoria) + '</option>').join('') + '</optgroup>'
       : '<option value="dir:' + h(S.view.yo) + '">Directiva</option><optgroup label="Jugadores">' + js.map((j) => '<option value="ent:' + h(j.rut) + '">' + h(j.nombre) + ' · ' + h(j.categoria) + '</option>').join('') + '</optgroup>';
-    return '<form id="form-modal">' + campo('¿Con quién?', '<select name="hilo" required>' + ops + '</select>') + pie('Abrir conversación') + '</form>';
+    return '<button type="button" class="btn ancho tonal" data-act="nuevoGrupo">' + icono('grupo') + ' Crear grupo</button>' +
+      '<p class="ayuda" style="text-align:center">o escríbele a una persona</p>' +
+      '<form id="form-modal">' + campo('¿Con quién?', '<select name="hilo" required>' + ops + '</select>') + pie('Abrir conversación') + '</form>';
+  }
+
+  // Grupo de mensajes (sólo texto). Los apoderados de los jugadores del grupo también lo ven.
+  function formGrupo(g) {
+    const nuevo = !g;
+    const sel = new Set(g ? g.miembros : [yoId()]);
+    const chk = (u, extra) => '<li><label class="check-citar"><input type="checkbox" name="miembros[]" value="' + h(u.rut) + '"' + (sel.has(u.rut) ? ' checked' : '') + (u.rut === yoId() && nuevo ? ' disabled' : '') + (extra || '') + '><span class="marca"></span><div class="crece"><b>' + h(u.nombre) + (u.rut === yoId() ? ' (tú)' : '') + '</b><small>' + h(u.rol === 'jugador' ? etiqueta(u) : u.rol === 'apoderado' ? 'Apoderado' + ((u.hijos || []).length ? ' de ' + u.hijos.map((r) => (usuario(r) || { nombre: '?' }).nombre.split(/\s+/)[0]).join(', ') : '') : (u.cargo || u.rol)) + '</small></div></label></li>';
+    const staff = S.view.usuarios.filter((u) => esPersonal(u) && u.activo !== false);
+    const cats = S.view.config.categorias.filter((c) => jugadores().some((j) => j.categoria === c));
+    const apos = todosApoderados().filter((a) => !C.apoderadoSinRut(a));
+    return '<form id="form-modal">' + (nuevo ? '' : '<input type="hidden" name="id" value="' + h(g.id) + '">') +
+      campo('Nombre del grupo', input('nombre', g && g.nombre, 'required maxlength="60" placeholder="Ej: Cadetes 2026 · familias"')) +
+      '<p class="sub">Agregar una categoría completa</p><div class="chequeos">' + cats.map((c) => '<button type="button" class="chip" data-act="grupoCat" data-cat="' + h(c) + '"><span>' + icono('mas2') + h(c) + '</span></button>').join('') + '</div>' +
+      '<p class="ayuda">Los apoderados de los jugadores del grupo lo ven y pueden escribir. Es sólo de texto.</p>' +
+      '<p class="sub">Directiva y entrenadores</p><div class="tarjeta lista-chequeo"><ul class="lista">' + staff.map((u) => chk(u)).join('') + '</ul></div>' +
+      cats.map((c) => '<p class="sub">' + h(c) + '</p><div class="tarjeta lista-chequeo"><ul class="lista">' + jugadores().filter((j) => j.categoria === c).map((j) => chk(j, ' data-cat="' + h(c) + '"')).join('') + '</ul></div>').join('') +
+      (apos.length ? '<p class="sub">Sólo el apoderado (sin el jugador)</p><div class="tarjeta lista-chequeo"><ul class="lista">' + apos.map((a) => chk(a)).join('') + '</ul></div>' : '') +
+      pie(nuevo ? 'Crear grupo' : 'Guardar', nuevo ? '' : '<button type="button" class="btn ancho peligro" data-act="borrarGrupo" data-id="' + h(g.id) + '">Eliminar grupo</button>') + '</form>';
+  }
+
+  function vistaGrupo(g) {
+    const ms = miembrosGrupo(g).slice().sort((a, b) => (a.rol === 'jugador') - (b.rol === 'jugador') || a.nombre.localeCompare(b.nombre));
+    const creador = autorMsj(g.creador);
+    return '<p class="ayuda">Creado por ' + h(creador ? creador.nombre : '?') + '. Los apoderados de los jugadores también lo ven.</p>' +
+      '<div class="tarjeta"><ul class="lista">' + ms.map((u) => '<li><span class="avatar-chat">' + h(iniciales(u.nombre)) + '</span><div class="crece"><b>' + h(u.nombre) + (u.rut === yoId() ? ' (tú)' : '') + '</b><small>' + h(u.rol === 'jugador' ? (u.categoria ? etiqueta(u) : 'Jugador') : u.rol === 'apoderado' ? 'Apoderado' : (u.cargo || u.rol || '')) + '</small></div>' + (u.rut === g.creador ? insignia('Admin', 'oro') : '') + '</li>').join('') + '</ul></div>' +
+      '<div class="modal-pie columna">' + (puedoEditarGrupo(g) ? '<button class="btn primario ancho" data-act="editarGrupo" data-id="' + h(g.id) + '">Editar grupo</button>' : '') +
+      (g.miembros.some((m) => (m.rut || m) === yoId()) && g.creador !== yoId() ? '<button class="btn ancho peligro" data-act="salirGrupo" data-id="' + h(g.id) + '">Salir del grupo</button>' : '') + '</div>';
   }
 
   function formMisDatos(j, propio) {
@@ -2099,7 +2311,7 @@
   // ---------- Render ----------
   const VISTAS = {
     inicio: vistaInicio, avisos: vistaAvisos, jugadores: vistaJugadores, finanzas: () => (esDir() ? vistaFinanzas() : vistaMisFinanzas()), entrenamientos: vistaEntrenamientos, partidos: vistaPartidos,
-    lesiones: vistaLesiones, documentos: vistaDocumentos, convenios: vistaConvenios, ajustes: vistaAjustes, calendario: vistaCalendario, perfil: vistaPerfil, mas: vistaMas,
+    lesiones: vistaLesiones, documentos: vistaDocumentos, convenios: vistaConvenios, ajustes: vistaAjustes, equipo: vistaEquipo, calendario: vistaCalendario, perfil: vistaPerfil, mas: vistaMas,
     chat: vistaChat, pizarra: vistaPizarra, jugadas: vistaJugadas,
     estadisticas: vistaEstadisticas, fisico: vistaFisico, encuestas: vistaEncuestas, galeria: vistaGaleria, inventario: vistaInventario,
   };
@@ -2161,6 +2373,7 @@
     segmento: (d) => {
       if (d.nombre === 'anioFin') S.anioFin = Number(d.valor);
       if (d.nombre === 'verPasados') S.verPasados = d.valor === '1';
+      if (d.nombre === 'verApo') { S.verApo = d.valor === '1'; S.busqueda = ''; }
       if (d.nombre === 'cancha' && S.piz) S.piz.cancha = d.valor;
       render();
     },
@@ -2232,10 +2445,28 @@
       } catch (e) { toast(e.message, 'error'); }
     },
     fichaMedica: (d) => abrirModal('Ficha médica', formFichaMedica(usuario(d.rut)), (o) => accion('ficha.guardar', o, 'Ficha médica guardada')),
-    agregarApoderado: (d) => abrirModal('Agregar apoderado', '<form id="form-modal"><input type="hidden" name="rut" value="' + h(d.rut) + '"><p class="ayuda">Si ya tiene cuenta (otro hijo en el club), basta con el RUT. Entra con su RUT y los 4 primeros dígitos.</p>' +
-      campo('RUT del apoderado', input('apoderadoRut', '', 'required placeholder="12.345.678-9"')) + campo('Nombre', input('apoderadoNombre', '', 'maxlength="80"')) +
-      '<div class="campos">' + campo('Teléfono', input('apoderadoTelefono', '', 'type="tel"')) + campo('Email', input('apoderadoEmail', '', 'type="email"')) + '</div>' + pie('Agregar') + '</form>',
-    async (o) => { const ok = await accion('apoderado.vincular', o, 'Apoderado agregado'); if (ok) abrirModal('Ficha del jugador', fichaJugador(d.rut)); return false; }),
+    agregarApoderado: (d) => abrirModal('Agregar apoderado de ' + usuario(d.rut).nombre.split(/\s+/)[0], '<form id="form-modal"><input type="hidden" name="rut" value="' + h(d.rut) + '">' +
+      camposApoderado(apoderados(d.rut).map((a) => a.rut)) + pie('Agregar') + '</form>',
+    async (o) => {
+      if (!o.apoderadoId && !String(o.apoderadoNombre || '').trim()) throw new Error('Elige un apoderado o escribe su nombre');
+      const ok = await accion('apoderado.vincular', o, 'Apoderado agregado'); if (ok) abrirModal('Ficha del jugador', fichaJugador(d.rut)); return false;
+    }),
+    nuevoApoderado: () => abrirModal('Nuevo apoderado', formApoderado(), (o) => accion('apoderado.crear', o, 'Apoderado "' + o.nombre.trim() + '" creado')),
+    editarApoderado: (d) => abrirModal('Apoderado', formApoderado(usuario(d.id)), async (o) => {
+      const ok = await accion('apoderado.editar', o, 'Apoderado guardado');
+      if (ok && d.volver) { abrirModal('Ficha del jugador', fichaJugador(d.volver)); return false; }
+      return ok;
+    }),
+    borrarApoderado: (d) => {
+      const a = usuario(d.id);
+      if (!confirm(C.apoderadoSinRut(a) ? '¿Eliminar a ' + a.nombre + '?' : '¿Desactivar la cuenta de ' + a.nombre + '? Ya no podrá entrar ni ver a sus hijos.')) return;
+      cerrarModal();
+      enviarConError(accion('apoderado.eliminar', { id: d.id }, 'Listo'));
+    },
+    estadoJugador: async (d) => {
+      const ok = await accion('jugador.estado', { rut: d.rut, estado: d.e }, d.e === 'lesionado' ? 'Marcado como lesionado' : 'Marcado como habilitado');
+      if (ok && !$('#modal').hidden) abrirModal('Ficha del jugador', fichaJugador(d.rut));
+    },
     quitarApoderado: (d) => { if (confirm('¿Quitar a este apoderado? Ya no podrá ver ni gestionar a este jugador.')) accion('apoderado.desvincular', { rut: d.rut, apoderadoRut: d.apoderado }, 'Apoderado quitado').then((ok) => { if (ok) abrirModal('Ficha del jugador', fichaJugador(d.rut)); }); },
     activoJugador: (d) => {
       if (!confirm(d.activo ? '¿Reactivar a este jugador?' : '¿Dar de baja a este jugador? Ya no podrá ingresar.')) return;
@@ -2360,6 +2591,25 @@
     // Chat
     abrirHilo: (d) => { S.hilo = d.hilo; render(); irAlFinalChat(); },
     cerrarHilo: () => { S.hilo = null; render(); window.scrollTo(0, 0); },
+    nuevoGrupo: () => abrirModal('Nuevo grupo', formGrupo(), guardarGrupo),
+    editarGrupo: (d) => abrirModal('Editar grupo', formGrupo((S.view.grupos || []).find((g) => g.id === d.id)), guardarGrupo),
+    verGrupo: (d) => { const g = (S.view.grupos || []).find((x) => x.id === d.id); abrirModal(g.nombre, vistaGrupo(g)); },
+    grupoCat: (d, el) => {
+      const cajas = Array.from(document.querySelectorAll('#modal input[data-cat="' + CSS.escape(d.cat) + '"]'));
+      const todas = cajas.every((c) => c.checked);
+      cajas.forEach((c) => { c.checked = !todas; });
+      el.classList.toggle('activo', !todas);
+    },
+    borrarGrupo: (d) => {
+      if (!confirm('¿Eliminar el grupo y todos sus mensajes?')) return;
+      cerrarModal(); S.hilo = null;
+      enviarConError(accion('grupo.eliminar', { id: d.id }, 'Grupo eliminado'));
+    },
+    salirGrupo: (d) => {
+      if (!confirm('¿Salir del grupo? Ya no verás sus mensajes.')) return;
+      cerrarModal(); S.hilo = null;
+      enviarConError(accion('grupo.salir', { id: d.id }, 'Saliste del grupo'));
+    },
     nuevoChat: () => abrirModal('Nuevo mensaje', formNuevoChat(), (o) => { S.tab = 'chat'; S.hilo = o.hilo; cerrarModal(); render(); irAlFinalChat(); return false; }),
 
     // Entrenamientos
@@ -2379,12 +2629,14 @@
     nuevoPartido: () => abrirModal('Nuevo partido', formPartido(), (o) => accion('partido.guardar', o, 'Partido creado')),
     editarPartido: (d) => abrirModal('Editar partido', formPartido(partido(d.id)), (o) => accion('partido.guardar', o, 'Guardado')),
     borrarPartido: (d) => { if (confirm('¿Eliminar este partido?')) enviarConError(accion('partido.eliminar', { id: d.id }, 'Eliminado')); },
-    citar: (d) => abrirCitacion(d.id, false),
-    citarTodas: (d) => abrirCitacion(d.id, true),
+    citar: (d) => abrirCitacion(d.id),
     reemplazar: (d) => abrirReemplazo(d.id, d.sale),
     convocatoria: (d) => abrirModal('Convocatoria', vistaConvocatoria(partido(d.id))),
     pdfConvocatoria: (d) => imprimirConvocatoria(partido(d.id)),
     copiarConvocatoria: (d) => copiar(textoConvocatoria(partido(d.id))),
+    sticker: (d) => abrirSticker(d.id),
+    stickerEstilo: (d) => { S.stickerClaro = d.v === 'claro'; abrirSticker(d.id); },
+    stickerCompartir: (d) => compartirSticker(partido(d.id), d.modo),
     compartirConvocatoria: (d) => navigator.share({ text: textoConvocatoria(partido(d.id)) }).catch(() => {}),
     resultado: (d) => {
       const m = partido(d.id);
@@ -2541,9 +2793,18 @@
     });
   }
 
-  function abrirCitacion(id, todas) {
+  async function guardarGrupo(o) {
+    const nuevo = !o.id;
+    const ok = await accion('grupo.guardar', { id: o.id, nombre: o.nombre, miembros: o.miembros || [] }, nuevo ? 'Grupo creado' : 'Grupo guardado');
+    if (ok && nuevo) { const g = (S.view.grupos || []).slice().sort((a, b) => b.fecha.localeCompare(a.fecha))[0]; if (g) { S.tab = 'chat'; S.hilo = 'grp:' + g.id; cerrarModal(); render(); irAlFinalChat(); return false; } }
+    return ok;
+  }
+
+  function abrirCitacion(id) {
     const m = partido(id);
-    abrirModal('Citar jugadores', formCitacion(m, todas), async (o) => {
+    abrirModal('Nómina vs ' + m.rival, formCitacion(m), async (o) => {
+      const les = (o.ruts || []).filter((r) => !m.citados[r] && estado(r) === 'lesionado');
+      if (les.length && !confirm(les.map((r) => usuario(r).nombre).join(', ') + (les.length > 1 ? ' están lesionados' : ' está lesionado') + '. ¿Citar igual?')) return false;
       const noHab = (o.ruts || []).filter((r) => !hab(r));
       if (noHab.length && !confirm(noHab.map((r) => usuario(r).nombre).join(', ') + (noHab.length > 1 ? ' no están habilitados' : ' no está habilitado') + ' (federativo pendiente). ¿Citar igual?')) return false;
       const cuerpoTecnico = {};
@@ -2573,6 +2834,8 @@
     else if (k === 'verInactivos') { S.verInactivos = ev.target.checked; render(); }
     else if (k === 'catEst') { S.catEst = ev.target.value; render(); }
     else if (k === 'catFis') { S.catFis = ev.target.value; render(); }
+    // Al elegir un apoderado existente se ocultan los campos para crear uno nuevo.
+    if (ev.target.hasAttribute && ev.target.hasAttribute('data-apo-elegir')) ev.target.form.querySelectorAll('[data-apo-nuevo]').forEach((e) => { e.hidden = !!ev.target.value; });
     if (ev.target.hasAttribute && ev.target.hasAttribute('data-eval-cat')) abrirEvaluacion(ev.target.value, ev.target.form.fecha.value || HOY);
     if (ev.target.id === 'rep-mes' || ev.target.id === 'rep-anio') $('#rep-resumen').innerHTML = resumenReporte(reporteElegido());
     if (ev.target.hasAttribute && ev.target.hasAttribute('data-concepto-pago')) {

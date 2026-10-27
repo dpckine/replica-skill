@@ -260,8 +260,13 @@
   // Conversaciones: "dir:<id>" entre un jugador o entrenador y la directiva;
   // "ent:<rut>" entre un jugador y los entrenadores.
 
+  // "grp:<id>" es un grupo de mensajes (sólo texto) armado por la directiva o un entrenador.
   // El apoderado participa en las conversaciones de su hijo o hija.
   function puedeVerHilo(db, actor, hilo) {
+    if (String(hilo || '').startsWith('grp:')) {
+      const g = (db.grupos || []).find((x) => x.id === hilo.slice(4));
+      return !!(g && actor && (g.miembros.includes(actor.rut) || g.miembros.some((r) => esApoderadoDe(actor, r))));
+    }
     const m = /^(dir|ent):(.+)$/.exec(String(hilo || ''));
     if (!m) return false;
     const otro = buscarUsuario(db, m[2]);
@@ -285,6 +290,28 @@
     ruts.forEach((r) => { out.add(r); apoderadosDe(db, r).forEach((a) => out.add(a.rut)); });
     return Array.from(out);
   }
+
+  // ---------- Estado del jugador ----------
+  // Lesionado lo marca el cuerpo técnico; si no, está habilitado cuando tiene el federativo del año pagado.
+  function estadoJugador(db, j, anio) {
+    if (j.lesionado) return 'lesionado';
+    return habilitado(db, j.rut, anio || new Date().getFullYear()) ? 'habilitado' : 'noHabilitado';
+  }
+
+  // ---------- Nómina de un partido ----------
+  // Se puede citar de la misma categoría y de una categoría por debajo (misma rama).
+  // Los adultos (sobre Juvenil) pueden citar desde Juvenil hacia arriba.
+  function categoriasNomina(db, categoria) {
+    const bases = db.config.categoriasBase || [];
+    const rama = ramaCategoria(categoria);
+    const i = bases.indexOf(baseCategoria(categoria));
+    if (i < 0) return [categoria];
+    const juv = bases.indexOf('Juvenil');
+    const elegidas = juv >= 0 && i > juv ? bases.slice(juv) : bases.slice(Math.max(0, i - 1), i + 1);
+    // La propia primero, después las demás de mayor a menor.
+    return [categoria].concat(elegidas.filter((b) => b !== bases[i]).reverse().map((b) => (rama ? b + ' ' + rama : b)));
+  }
+  const puedeIrNomina = (db, m, j) => !!(j && j.rol === 'jugador' && j.activo !== false && categoriasNomina(db, m.categoria).includes(j.categoria));
 
   // ---------- Cambio de temporada ----------
   // Al pasar de año, quien estaba en 1er año pasa a 2do; quien estaba en 2do sube a la
@@ -624,7 +651,7 @@
     const base = dbVacia();
     if (db.version >= base.version) return db;
     ['avisos', 'firmas', 'movimientos', 'convenios', 'cobros', 'pagosInformados', 'mensajes', 'jugadas',
-      'evaluaciones', 'inventario', 'prestamos', 'encuestas', 'galeria', 'cambiosTemporada'].forEach((k) => { db[k] = db[k] || []; });
+      'evaluaciones', 'inventario', 'prestamos', 'encuestas', 'galeria', 'cambiosTemporada', 'grupos'].forEach((k) => { db[k] = db[k] || []; });
     ['pagosCobro', 'fotos', 'recordatoriosEnviados'].forEach((k) => { db[k] = db[k] || {}; });
     // Contacto de emergencia y previsión pasan a la ficha médica.
     db.usuarios.forEach((u) => {
@@ -648,7 +675,7 @@
   function dbVacia() {
     const anio = new Date().getFullYear();
     return {
-      version: 5,
+      version: 6,
       config: {
         club: 'Vieux Gaulois Handball',
         temporada: anio,
@@ -680,6 +707,7 @@
       pagosCobro: {},
       pagosInformados: [],
       mensajes: [],
+      grupos: [],
       jugadas: [],
       evaluaciones: [],
       inventario: [],
@@ -738,6 +766,11 @@
     ];
     // Apoderada de Sofía y Martín: los menores quedan habilitados cuando ella firma el consentimiento.
     add(15678901, { nombre: 'Carolina Herrera', rol: 'apoderado', telefono: '+56 9 4444 5555', email: 'carolina.herrera@example.com', hijos: [jugadores[10].rut, jugadores[11].rut] });
+    // Apoderados creados sólo con el nombre: entran a la app cuando se les agregue el RUT.
+    db.usuarios.push({ rut: 'apo:ejemplo1', rol: 'apoderado', nombre: 'Andrés Herrera', telefono: '+56 9 7777 2020', hijos: [jugadores[10].rut], activo: true, creado: hoy });
+    db.usuarios.push({ rut: 'apo:ejemplo2', rol: 'apoderado', nombre: 'Patricia Flores', hijos: [jugadores[7].rut], activo: true, creado: hoy });
+    // Matías se recupera de un esguince: queda como lesionado.
+    jugadores[5].lesionado = true;
     const ficha = (j, m) => { j.medica = Object.assign({ sangre: '', alergias: '', condiciones: '', medicamentos: '', seguro: '', prevision: '', emergencia: '', obs: '' }, m); };
     ficha(jugadores[0], { sangre: 'O+', alergias: 'Penicilina', prevision: 'Fonasa', seguro: 'Seguro deportivo Federación', emergencia: 'María Rojas (madre) +56 9 1111 2222' });
     ficha(jugadores[6], { sangre: 'A+', condiciones: 'Asma leve', medicamentos: 'Salbutamol antes de entrenar', prevision: 'Isapre Colmena', seguro: 'Seguro escolar', emergencia: 'Pedro Meinas (padre) +56 9 6666 1234' });
@@ -868,6 +901,12 @@
     msj('dir:' + jugadores[4].rut, 'usr:vieux', 'Hola Valentina, sí. Informa cada pago desde Finanzas en la app.', 240, ['usr:vieux']);
     msj('ent:' + jugadores[6].rut, jugadores[6].rut, 'Profe, el domingo llego directo al gimnasio, ¿hay problema?', 90, [jugadores[6].rut]);
     msj('dir:usr:jorge', 'usr:jorge', 'Necesitamos 10 balones nuevos para los Cadetes.', 60, ['usr:jorge']);
+    // Grupo de ejemplo: Cadetes con su entrenador.
+    const grupo = { id: 'grupo-cadetes', nombre: 'Cadete Masculino 2026', miembros: ['usr:jorge'].concat(jugadores.filter((j) => j.categoria === CAD).map((j) => j.rut)), creador: 'usr:jorge', fecha: new Date(Date.now() - 2 * 864e5).toISOString() };
+    db.grupos.push(grupo);
+    msj('grp:' + grupo.id, 'usr:jorge', 'Hola equipo, este es el grupo de Cadetes. Acá van los avisos rápidos de entrenamientos y partidos.', 2000, ['usr:jorge']);
+    msj('grp:' + grupo.id, jugadores[6].rut, '¡Buena profe! 💪', 1990, [jugadores[6].rut, 'usr:jorge']);
+    msj('grp:' + grupo.id, 'usr:jorge', 'Mañana entrenamos 18:00 en el Gimnasio Colegio. Lleguen 15 minutos antes.', 120, ['usr:jorge']);
 
     // Jugada de ejemplo: cruce central-lateral derecho y lanzamiento.
     db.jugadas.push({
@@ -1000,26 +1039,44 @@
     });
   }
 
-  // Crea la cuenta del apoderado (entra con su RUT y los 4 primeros dígitos) o le suma este hijo o hija.
+  // Crea la cuenta del apoderado o le suma este hijo o hija. Con RUT entra con su RUT y los
+  // 4 primeros dígitos; sin RUT queda creado sólo con el nombre y entra cuando se le agregue.
   function vincularApoderado(db, rutHijo, p) {
-    const lleno = [p.apoderadoRut, p.apoderadoNombre].some((v) => String(v || '').trim());
-    if (!lleno) return;
-    const rut = normalizarRut(p.apoderadoRut);
-    if (!rut) throw err('RUT del apoderado no válido');
-    if (rut === rutHijo) throw err('El apoderado debe ser otra persona');
-    let a = buscarUsuario(db, rut);
-    if (a && a.rol !== 'apoderado') throw err('Ese RUT ya tiene una cuenta de ' + a.rol + ' en el club');
-    const datos = { telefono: texto(p.apoderadoTelefono, 30), email: texto(p.apoderadoEmail, 80) };
-    if (!a) {
-      const nombre = texto(p.apoderadoNombre, 80);
-      if (!nombre) throw err('Indica el nombre del apoderado');
-      a = { rut, rol: 'apoderado', nombre, hijos: [], activo: true, creado: hoyISO() };
-      db.usuarios.push(a);
-    } else if (texto(p.apoderadoNombre, 80)) a.nombre = texto(p.apoderadoNombre, 80);
-    Object.keys(datos).forEach((k) => { if (datos[k]) a[k] = datos[k]; });
+    let a;
+    if (p.apoderadoId) {
+      a = buscarUsuario(db, p.apoderadoId);
+      if (!a || a.rol !== 'apoderado') throw err('Apoderado no encontrado');
+    } else {
+      const lleno = [p.apoderadoRut, p.apoderadoNombre].some((v) => String(v || '').trim());
+      if (!lleno) return;
+      a = crearApoderado(db, { rut: p.apoderadoRut, nombre: p.apoderadoNombre, telefono: p.apoderadoTelefono, email: p.apoderadoEmail }, rutHijo);
+    }
     a.activo = true;
+    a.hijos = a.hijos || [];
     if (!a.hijos.includes(rutHijo)) a.hijos.push(rutHijo);
+    return a;
   }
+
+  function crearApoderado(db, d, rutHijo) {
+    let rut = null;
+    if (String(d.rut || '').trim()) {
+      rut = normalizarRut(d.rut);
+      if (!rut) throw err('RUT del apoderado no válido');
+      if (rut === rutHijo) throw err('El apoderado debe ser otra persona');
+    }
+    let a = rut && buscarUsuario(db, rut);
+    if (a && a.rol !== 'apoderado') throw err('Ese RUT ya tiene una cuenta de ' + a.rol + ' en el club');
+    const nombre = texto(d.nombre, 80);
+    if (!a) {
+      if (!nombre) throw err('Indica el nombre del apoderado');
+      a = { rut: rut || 'apo:' + uid(), rol: 'apoderado', nombre, hijos: [], activo: true, creado: hoyISO() };
+      db.usuarios.push(a);
+    } else if (nombre) a.nombre = nombre;
+    if (texto(d.telefono, 30)) a.telefono = texto(d.telefono, 30);
+    if (texto(d.email, 80)) a.email = texto(d.email, 80);
+    return a;
+  }
+  const apoderadoSinRut = (u) => String(u && u.rut).startsWith('apo:');
 
   // Sólo se aceptan links web (evita "javascript:" y similares).
   function link(v) {
@@ -1102,8 +1159,54 @@
       case 'apoderado.vincular': {
         exigir(esStaff);
         const j = buscarJugador(db, p.rut);
-        if (!String(p.apoderadoRut || '').trim()) throw err('Indica el RUT del apoderado');
+        if (!p.apoderadoId && !String(p.apoderadoNombre || '').trim() && !String(p.apoderadoRut || '').trim()) throw err('Elige un apoderado o escribe su nombre');
         vincularApoderado(db, j.rut, p);
+        break;
+      }
+      // Apoderado creado primero sólo con el nombre; los hijos y el RUT se pueden agregar después.
+      case 'apoderado.crear': {
+        exigir(esStaff);
+        if (String(p.rut || '').trim() && buscarUsuario(db, normalizarRut(p.rut))) throw err('Ya existe una cuenta con ese RUT');
+        const a = crearApoderado(db, p);
+        (Array.isArray(p.hijos) ? p.hijos : []).forEach((r) => { const j = buscarJugador(db, r); if (!a.hijos.includes(j.rut)) a.hijos.push(j.rut); });
+        break;
+      }
+      case 'apoderado.editar': {
+        exigir(esStaff);
+        const a = buscarUsuario(db, p.id);
+        if (!a || a.rol !== 'apoderado') throw err('Apoderado no encontrado');
+        const nombre = texto(p.nombre, 80);
+        if (!nombre) throw err('Indica el nombre del apoderado');
+        a.nombre = nombre;
+        a.telefono = texto(p.telefono, 30);
+        a.email = texto(p.email, 80);
+        // Al agregarle RUT a un apoderado creado sólo con el nombre, pasa a poder entrar.
+        if (apoderadoSinRut(a) && String(p.rut || '').trim()) {
+          const rut = normalizarRut(p.rut);
+          if (!rut) throw err('RUT del apoderado no válido');
+          if (buscarUsuario(db, rut)) throw err('Ya existe una cuenta con ese RUT');
+          const viejo = a.rut;
+          a.rut = rut;
+          (db.grupos || []).forEach((g) => { g.miembros = g.miembros.map((r) => (r === viejo ? rut : r)); });
+          (db.mensajes || []).forEach((m) => { if (m.de === viejo) m.de = rut; m.leidoPor = m.leidoPor.map((r) => (r === viejo ? rut : r)); });
+        }
+        if (Array.isArray(p.hijos)) a.hijos = p.hijos.map((r) => buscarJugador(db, r).rut);
+        break;
+      }
+      case 'apoderado.eliminar': {
+        exigir(esStaff);
+        const a = buscarUsuario(db, p.id);
+        if (!a || a.rol !== 'apoderado') throw err('Apoderado no encontrado');
+        if (apoderadoSinRut(a)) {
+          db.usuarios = db.usuarios.filter((u) => u !== a);
+          (db.grupos || []).forEach((g) => { g.miembros = g.miembros.filter((r) => r !== a.rut); });
+        } else { a.hijos = []; a.activo = false; }
+        break;
+      }
+      case 'jugador.estado': {
+        exigir(esStaff);
+        const j = buscarJugador(db, p.rut);
+        j.lesionado = p.estado === 'lesionado';
         break;
       }
       case 'apoderado.desvincular': {
@@ -1326,7 +1429,8 @@
         if (!m) throw err('Partido no encontrado');
         const nuevos = {};
         (p.ruts || []).forEach((rut) => {
-          buscarJugador(db, rut);
+          const j = buscarJugador(db, rut);
+          if (!m.citados[rut] && !puedeIrNomina(db, m, j)) throw err(j.nombre + ' es de ' + j.categoria + ': para ' + m.categoria + ' puedes citar de ' + categoriasNomina(db, m.categoria).join(', '));
           nuevos[rut] = m.citados[rut] || 'pendiente';
         });
         const recien = Object.keys(nuevos).filter((r) => !m.citados[r]);
@@ -1366,11 +1470,11 @@
         if (!m) throw err('Partido no encontrado');
         const cambios = (Array.isArray(p.cambios) ? p.cambios : []).filter((c) => c && c.entra).slice(0, 30);
         if (!cambios.length) throw err('Elige quién entra');
-        const reserva = new Set(reservasDe(db, m));
         const usados = new Set();
         cambios.forEach((c) => {
           if (!m.citados[c.sale]) throw err('Ese jugador ya no está citado');
-          if (!reserva.has(c.entra) || usados.has(c.entra)) throw err(nombreJugador(db, c.entra) + ' no está en la reserva de este partido');
+          // Entra alguien de la reserva o de las categorías que permite la nómina.
+          if (m.citados[c.entra] || usados.has(c.entra) || !puedeIrNomina(db, m, buscarUsuario(db, c.entra))) throw err(nombreJugador(db, c.entra) + ' no está en la reserva de este partido');
           usados.add(c.entra);
         });
         m.reemplazos = m.reemplazos || [];
@@ -1567,6 +1671,11 @@
         const t = texto(p.texto, 1000);
         if (!t) throw err('Escribe un mensaje');
         db.mensajes.push({ id: uid(), hilo: p.hilo, de: actor.rut, texto: t, fecha: new Date().toISOString(), leidoPor: [actor.rut] });
+        if (p.hilo.startsWith('grp:')) {
+          const g = db.grupos.find((x) => x.id === p.hilo.slice(4));
+          notificar(db, conApoderados(db, g.miembros).filter((r) => r !== actor.rut), g.nombre, actor.nombre.split(' ')[0] + ': ' + t.slice(0, 110), 'chat');
+          break;
+        }
         // Aviso a la otra parte: la directiva o los entrenadores, o el jugador y sus apoderados.
         const [tipo, otroRut] = [p.hilo.slice(0, 3), p.hilo.slice(4)];
         const equipo = db.usuarios.filter((u) => u.activo !== false && u.rol === (tipo === 'dir' ? 'directiva' : 'entrenador')).map((u) => u.rut);
@@ -1577,6 +1686,41 @@
       case 'chat.leer': {
         if (!puedeVerHilo(db, actor, p.hilo)) throw err('Conversación no encontrada');
         db.mensajes.forEach((m) => { if (m.hilo === p.hilo && !m.leidoPor.includes(actor.rut)) m.leidoPor.push(actor.rut); });
+        break;
+      }
+
+      // ----- Grupos de mensajes -----
+      case 'grupo.guardar': {
+        exigir(esStaff);
+        const nombre = texto(p.nombre, 60);
+        if (!nombre) throw err('Ponle un nombre al grupo');
+        const miembros = Array.from(new Set((Array.isArray(p.miembros) ? p.miembros : []).concat(p.id ? [] : [actor.rut]))).slice(0, 300);
+        miembros.forEach((r) => { const u = buscarUsuario(db, r); if (!u || u.activo === false) throw err('Hay un integrante que no existe'); });
+        if (miembros.length < 2) throw err('Agrega al menos un integrante');
+        if (p.id) {
+          const g = db.grupos.find((x) => x.id === p.id);
+          if (!g) throw err('Grupo no encontrado');
+          exigir(g.creador === actor.rut || esDir);
+          Object.assign(g, { nombre, miembros });
+        } else {
+          const g = { id: uid(), nombre, miembros, creador: actor.rut, fecha: new Date().toISOString() };
+          db.grupos.push(g);
+          notificar(db, conApoderados(db, miembros).filter((r) => r !== actor.rut), 'Nuevo grupo: ' + nombre, actor.nombre + ' te agregó al grupo.', 'chat');
+        }
+        break;
+      }
+      case 'grupo.eliminar': {
+        const g = db.grupos.find((x) => x.id === p.id);
+        if (!g) throw err('Grupo no encontrado');
+        exigir(g.creador === actor.rut || esDir);
+        db.grupos = db.grupos.filter((x) => x !== g);
+        db.mensajes = db.mensajes.filter((m) => m.hilo !== 'grp:' + g.id);
+        break;
+      }
+      case 'grupo.salir': {
+        const g = db.grupos.find((x) => x.id === p.id);
+        if (!g || !g.miembros.includes(actor.rut)) throw err('No estás en este grupo');
+        g.miembros = g.miembros.filter((r) => r !== actor.rut);
         break;
       }
 
@@ -1960,6 +2104,7 @@
     v.yo = rut;
     // Cada uno ve sólo las conversaciones en que participa.
     v.mensajes = (v.mensajes || []).filter((m) => puedeVerHilo(db, yo, m.hilo));
+    v.grupos = (v.grupos || []).filter((g) => puedeVerHilo(db, yo, 'grp:' + g.id));
     v.encuestas = (v.encuestas || []).map((e) => Object.assign(resultadoEncuesta(e, null), { habilitados: jugadoresDeCategoria(db, e.categoria).length }));
     if (yo.rol === 'directiva') {
       // La ficha médica es sólo para el cuerpo técnico.
@@ -1984,7 +2129,12 @@
     ['fotos', 'fotosBorradas', 'notificar', 'recordatoriosEnviados', 'cambiosTemporada', 'inventario', 'prestamos', 'evaluaciones', 'recordatoriosLog'].forEach((k) => delete v[k]);
     v.yo = rut;
     v.yoReal = apo ? apo.rut : rut;
-    v.mensajes = (v.mensajes || []).filter((m) => puedeVerHilo(db, yo, m.hilo));
+    const ve = (hilo) => puedeVerHilo(db, yo, hilo) || (apo && puedeVerHilo(db, apo, hilo));
+    v.mensajes = (v.mensajes || []).filter((m) => ve(m.hilo));
+    // Grupos: el jugador ve los nombres de los integrantes, nada más.
+    v.grupos = (db.grupos || []).filter((g) => ve('grp:' + g.id)).map((g) => Object.assign({}, g, {
+      miembros: g.miembros.map((r) => { const u = buscarUsuario(db, r) || { nombre: '?' }; return { rut: r, nombre: u.nombre, rol: u.rol, cargo: u.cargo || '' }; }),
+    }));
     v.convenios = v.convenios.filter((c) => convenioPublicado(c) || c.propuestoPor === v.yoReal);
     const anio = new Date().getFullYear();
     const yoV = clone(yo);
@@ -2060,6 +2210,6 @@
     hashClave, verificarClave, cambiarClave, prepararAccion,
     MESES_LARGOS, esMenor, apoderadosDe, siguienteCategoria, cambioTemporada,
     CAMPOS_ESTADISTICA, tablaGoleadores, estadisticasJugador, TESTS_FISICOS, cumpleanosDelMes,
-    reporteMensual, recordatoriosPendientes, marcarRecordatorio, crearXlsx, crc32, encuestaCerrada, reservasDe, MAX_FOTOS_ALBUM, pesos,
+    reporteMensual, recordatoriosPendientes, marcarRecordatorio, crearXlsx, crc32, encuestaCerrada, reservasDe, categoriasNomina, puedeIrNomina, estadoJugador, apoderadoSinRut, MAX_FOTOS_ALBUM, pesos,
   };
 });

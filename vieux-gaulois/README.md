@@ -9,7 +9,7 @@ App de gestión del club con cuatro accesos: **Directiva**, **Entrenadores**, **
 - **Apoderados:** igual que los jugadores, con su RUT y los 4 primeros dígitos. La cuenta se crea
   al inscribir a un menor (o desde su ficha, "+ Agregar apoderado"). Un apoderado con varios hijos
   en el club los ve todos y cambia entre ellos con un toque.
-- **Entrenadores y directiva:** **usuario y clave definidos por la directiva** (Ajustes).
+- **Entrenadores y directiva:** **usuario y clave definidos por la directiva** (Más → Directiva y entrenadores).
   La directiva puede cambiarles la clave cuando quiera.
 - **Cuenta inicial de directiva:** usuario `vieux`, clave `vieuxg1234`. Cámbiala con el botón "Clave".
 - **Jugadores que también son entrenadores:** siguen entrando con su RUT a su perfil de jugador,
@@ -79,6 +79,14 @@ Al citar a un jugador no habilitado, la app avisa al entrenador.
   rival, hora, fecha, calcetas, lugar e indicaciones, en el mismo formato que la citación de
   WhatsApp. Se puede descargar en PDF (opción "Guardar como PDF" del diálogo de impresión),
   copiar el texto para WhatsApp o compartirla. Los jugadores confirman con "Voy" o "No puedo".
+- **Nómina por categorías:** el entrenador cita de la categoría del partido y de una categoría
+  por debajo (misma rama). Los adultos (Junior, Adultos B, Primer Equipo y Master) pueden
+  citar desde Juvenil hacia arriba.
+- **Estado del jugador:** el cuerpo técnico lo marca como Habilitado o Lesionado desde su ficha.
+  Si no pagó el federativo del año aparece como No habilitado.
+- **Sticker de la nómina para historias:** desde la convocatoria se genera un PNG con fondo
+  transparente (logo, categoría, rival, jugadores por número y cuerpo técnico) en azul o blanco,
+  para copiar, compartir o descargar y ponerlo sobre una foto en el estado de WhatsApp.
 - **Reserva y cambios:** los jugadores de la categoría que no quedan citados forman la reserva
   de ese partido (cambia con cada convocatoria). Si un citado marca "No puedo", el entrenador
   recibe el aviso y con "Cambiar" elige quién de la reserva entra en su lugar; el que entra
@@ -121,6 +129,11 @@ Al citar a un jugador no habilitado, la app avisa al entrenador.
 - **Encuestas:** para todo el club o una categoría, con fecha de cierre. Los votos son anónimos.
 - **Galería:** sólo los entrenadores suben fotos (plantel, partido o evento), máximo 3 por álbum
   y achicadas en el teléfono antes de subirlas para no llenar el servidor.
+- **Grupos de mensajes:** la directiva y los entrenadores crean grupos de texto (como los de
+  WhatsApp) con jugadores, cuerpo técnico y apoderados; se puede sumar una categoría completa con
+  un toque. Los apoderados de los jugadores del grupo también lo ven y pueden escribir.
+- **Apoderados sólo con nombre:** en Jugadores → Apoderados se crean con el nombre y, cuando se
+  tenga, el RUT (con RUT pueden entrar y firmar). Un jugador puede tener varios apoderados.
 - **Notificaciones push:** cada persona las activa en "Mi cuenta". Avisan de citaciones,
   mensajes, avisos, encuestas, fotos, pagos revisados y cuotas por vencer. En iPhone primero hay
   que agregar la app a la pantalla de inicio (Compartir → Agregar a inicio).

@@ -567,7 +567,7 @@ test('recordatorios: una vez por cuota, al apoderado si el jugador es menor', ()
   db.usuarios.filter((u) => u.rol === 'jugador').forEach((u) => { if (db.pagos[u.rut] && db.pagos[u.rut][ANIO]) delete db.pagos[u.rut][ANIO][mes]; });
   const lista = C.recordatoriosPendientes(db, dia);
   assert.ok(lista.length >= 10 && lista.every((x) => x.tipo === 'antes'));
-  assert.deepStrictEqual(lista.find((x) => x.rut === SOFIA).destinatarios.map((d) => d.rut), [APO]);
+  assert.deepStrictEqual(lista.find((x) => x.rut === SOFIA).destinatarios.map((d) => d.rut), [APO, 'apo:ejemplo1']);
   assert.match(lista.find((x) => x.rut === SOFIA).texto, /la cuota de Sofía/);
   lista.forEach((x) => C.marcarRecordatorio(db, x.clave));
   assert.strictEqual(C.recordatoriosPendientes(db, dia).length, 0);
@@ -584,7 +584,7 @@ test('notificaciones: citación avisa al jugador y a su apoderado', () => {
   C.applyAction(db, ENT, { type: 'partido.guardar', payload: { rival: 'Rival', categoria: 'Infantil Femenino', fecha: C.sumarDias(C.hoyISO(), 3), hora: '10:00' } });
   const m = db.partidos.find((x) => x.rival === 'Rival');
   C.applyAction(db, ENT, { type: 'citacion.guardar', payload: { id: m.id, ruts: [SOFIA] } });
-  assert.deepStrictEqual(db.notificar.pop().para.sort(), [SOFIA, APO].sort());
+  assert.deepStrictEqual(db.notificar.pop().para.sort(), [SOFIA, APO, 'apo:ejemplo1'].sort());
   C.applyAction(db, APO, { type: 'citacion.responder', payload: { hijo: SOFIA, id: m.id, respuesta: 'confirmado' } });
   assert.strictEqual(m.citados[SOFIA], 'confirmado');
 });
@@ -638,4 +638,68 @@ test('usuario de staff: acepta mayúsculas, tildes y espacios', async () => {
   assert.ok(u);
   assert.strictEqual(C.idDeIngreso('PSoto'), 'usr:psoto');
   assert.ok(await C.verificarClave(u, 'pedro1234', sha256));
+});
+
+test('nómina: una categoría por debajo; adultos desde Juvenil', () => {
+  const db = C.dbEjemplo();
+  assert.deepStrictEqual(C.categoriasNomina(db, 'Cadete Masculino'), ['Cadete Masculino', 'Infantil Masculino']);
+  assert.deepStrictEqual(C.categoriasNomina(db, 'Mini Femenino'), ['Mini Femenino']);
+  assert.deepStrictEqual(C.categoriasNomina(db, 'Juvenil Femenino'), ['Juvenil Femenino', 'Cadete Femenino']);
+  assert.deepStrictEqual(C.categoriasNomina(db, 'Primer Equipo Masculino'), ['Primer Equipo Masculino', 'Master Masculino', 'Adultos B Masculino', 'Junior Masculino', 'Juvenil Masculino']);
+  const m = db.partidos.find((x) => x.rival === 'Club Balonmano Andes'); // Primer Equipo Masculino
+  const juvenil = C.rutDesdeCuerpo(23456789), cadete = C.rutDesdeCuerpo(24567890);
+  C.applyAction(db, ENT, { type: 'citacion.guardar', payload: { id: m.id, ruts: Object.keys(m.citados).concat([juvenil]) } });
+  assert.ok(m.citados[juvenil]);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'citacion.guardar', payload: { id: m.id, ruts: Object.keys(m.citados).concat([cadete]) } }), /puedes citar de/);
+});
+
+test('estado del jugador: lesionado o habilitado', () => {
+  const db = C.dbEjemplo();
+  const t = db.usuarios.find((u) => u.rut === JUG);
+  assert.strictEqual(C.estadoJugador(db, t), 'habilitado');
+  assert.throws(() => C.applyAction(db, JUG, { type: 'jugador.estado', payload: { rut: JUG, estado: 'lesionado' } }));
+  C.applyAction(db, ENT, { type: 'jugador.estado', payload: { rut: JUG, estado: 'lesionado' } });
+  assert.strictEqual(C.estadoJugador(db, t), 'lesionado');
+  C.applyAction(db, DIR, { type: 'jugador.estado', payload: { rut: JUG, estado: 'habilitado' } });
+  assert.strictEqual(C.estadoJugador(db, t), 'habilitado');
+});
+
+test('apoderados: sólo con nombre, varios por jugador y RUT después', () => {
+  const db = C.dbEjemplo();
+  const RENATO = C.rutDesdeCuerpo(24678901);
+  C.applyAction(db, DIR, { type: 'apoderado.crear', payload: { nombre: 'Luis Flores' } });
+  const a = db.usuarios.find((u) => u.nombre === 'Luis Flores');
+  assert.ok(C.apoderadoSinRut(a));
+  C.applyAction(db, ENT, { type: 'apoderado.vincular', payload: { rut: RENATO, apoderadoId: a.rut } });
+  C.applyAction(db, ENT, { type: 'apoderado.vincular', payload: { rut: RENATO, apoderadoNombre: 'Marta Soto' } });
+  const nombres = db.usuarios.filter((u) => u.rol === 'apoderado' && (u.hijos || []).includes(RENATO)).map((u) => u.nombre).sort();
+  assert.deepStrictEqual(nombres, ['Luis Flores', 'Marta Soto', 'Patricia Flores']);
+  // Sin RUT no puede entrar; al agregarlo, entra con su RUT.
+  const rut = C.rutDesdeCuerpo(13111222);
+  C.applyAction(db, DIR, { type: 'apoderado.editar', payload: { id: a.rut, nombre: 'Luis Flores', rut } });
+  assert.strictEqual(a.rut, rut);
+  const v = C.viewFor(db, rut);
+  assert.strictEqual(v.hijos[0].yo, RENATO);
+  assert.throws(() => C.applyAction(db, DIR, { type: 'apoderado.crear', payload: { nombre: 'Otro', rut } }), /Ya existe/);
+});
+
+test('grupos de mensajes: sólo integrantes, y apoderados de los jugadores', () => {
+  const db = C.dbEjemplo();
+  const SOFIA = C.rutDesdeCuerpo(24901234), APO = C.rutDesdeCuerpo(15678901), CAM = C.rutDesdeCuerpo(18765432);
+  assert.throws(() => C.applyAction(db, CAM, { type: 'grupo.guardar', payload: { nombre: 'x', miembros: [SOFIA] } }), /permiso/i);
+  C.applyAction(db, DIR, { type: 'grupo.guardar', payload: { nombre: 'Infantil F', miembros: [SOFIA, ENT] } });
+  const g = db.grupos.find((x) => x.nombre === 'Infantil F');
+  assert.ok(g.miembros.includes(DIR));
+  db.notificar = [];
+  C.applyAction(db, ENT, { type: 'chat.enviar', payload: { hilo: 'grp:' + g.id, texto: 'Hola familias' } });
+  assert.ok(db.notificar[0].para.includes(APO) && db.notificar[0].para.includes(DIR));
+  assert.throws(() => C.applyAction(db, CAM, { type: 'chat.enviar', payload: { hilo: 'grp:' + g.id, texto: 'hola' } }), /No puedes/);
+  // La apoderada lo ve desde la vista de Sofía, con los nombres de los integrantes.
+  const vApo = C.viewFor(db, APO).hijos.find((h) => h.yo === SOFIA);
+  assert.ok(vApo.grupos.some((x) => x.id === g.id && x.miembros.some((mm) => mm.nombre)));
+  assert.ok(vApo.mensajes.some((mm) => mm.hilo === 'grp:' + g.id));
+  assert.ok(!C.viewFor(db, CAM).grupos.some((x) => x.id === g.id));
+  assert.throws(() => C.applyAction(db, ENT, { type: 'grupo.eliminar', payload: { id: g.id } }), /permiso/i);
+  C.applyAction(db, DIR, { type: 'grupo.eliminar', payload: { id: g.id } });
+  assert.ok(!db.mensajes.some((mm) => mm.hilo === 'grp:' + g.id));
 });

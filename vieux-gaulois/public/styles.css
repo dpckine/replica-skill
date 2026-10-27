@@ -810,3 +810,42 @@ body.sin-sesion .toast { bottom: calc(24px + var(--seguro-abajo)); }
   .cambio-flecha { display: none; }
 }
 .chip-jugador small { color: var(--alerta); font-size: 11px; font-weight: 600; }
+
+/* Directiva y entrenadores, estado del jugador, nómina, grupos y sticker */
+.c-equipo { background: var(--secundario-cont); color: var(--sobre-secundario-cont); }
+.btn.tonal { background: var(--primario-cont); color: var(--sobre-primario-cont); border: 0; }
+.btn.tonal:hover { filter: brightness(.96); }
+.estado-sel { display: flex; border: 1px solid var(--contorno); border-radius: 20px; overflow: hidden; }
+.estado-sel button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 8px 12px;
+  border: 0; background: none; color: var(--texto); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.estado-sel button + button { border-left: 1px solid var(--contorno); }
+.estado-sel button .ico { width: 18px; height: 18px; }
+.estado-sel button.activo { background: var(--terciario-cont); color: var(--sobre-terciario-cont); }
+.estado-sel button.activo.habilitado { background: var(--exito-cont); color: var(--exito); }
+.estado-sel button.activo.lesionado { background: var(--secundario-cont); color: var(--sobre-secundario-cont); }
+.estado-sel + .ayuda { margin-top: 10px; }
+.sticker-vista + .estado-sel { margin: 14px 0 4px; }
+.nomina-cat { display: flex; justify-content: space-between; gap: 8px; }
+.nomina-cat span { color: var(--suave); text-transform: none; letter-spacing: 0; font-weight: 600; }
+button.chip { border: 0; background: none; padding: 0; font: inherit; }
+button.chip span { display: inline-flex; align-items: center; gap: 4px; }
+button.chip .ico { width: 14px; height: 14px; }
+button.chip.activo span { background: var(--primario-cont); color: var(--sobre-primario-cont); border-color: transparent; }
+.avatar-chat.grupo { background: var(--terciario-cont); color: var(--sobre-terciario-cont); }
+.avatar-chat.grupo .ico { width: 22px; height: 22px; }
+.grupo-cab {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; margin-bottom: 12px; padding: 10px 12px;
+  border: 0; border-radius: var(--radio); background: var(--sup-1); color: var(--texto); font: inherit; cursor: pointer;
+}
+.grupo-cab:hover { background: var(--sup-3); }
+.grupo-cab b { display: block; font-size: 15px; }
+.grupo-cab small { display: block; font-size: 13px; color: var(--suave); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grupo-cab .crece { min-width: 0; }
+/* Vista previa del sticker sobre una "foto" de ejemplo para ver la transparencia */
+.sticker-vista {
+  border-radius: 20px; padding: 28px 22px; display: grid; place-items: center;
+  background: linear-gradient(160deg, #6b8f71 0%, #2f5d62 45%, #c9a46a 100%);
+}
+.sticker-vista img { width: 100%; max-width: 380px; height: auto; filter: drop-shadow(0 6px 16px rgba(0,0,0,.35)); }
