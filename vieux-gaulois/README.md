@@ -176,7 +176,7 @@ SIN_DATOS_EJEMPLO=1 npm start
 ```
 
 Crea una base vacía con una sola cuenta de directiva (`vieux` / `vieuxg1234`). Desde ahí se agregan entrenadores
-(Ajustes) y jugadores (Jugadores).
+(Más → Directiva y entrenadores), jugadores y apoderados (Jugadores).
 
 Variables: `PORT` (puerto, 3000 por defecto) y `DATA_FILE` (ruta del archivo de datos).
 Respalda la carpeta `data/` con regularidad: ahí están los datos (`db.json`), las fotos
