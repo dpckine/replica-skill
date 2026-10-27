@@ -849,3 +849,16 @@ button.chip.activo span { background: var(--primario-cont); color: var(--sobre-p
   background: linear-gradient(160deg, #6b8f71 0%, #2f5d62 45%, #c9a46a 100%);
 }
 .sticker-vista img { width: 100%; max-width: 380px; height: auto; filter: drop-shadow(0 6px 16px rgba(0,0,0,.35)); }
+
+/* Cuota suspendida o rebajada y eliminar con motivo */
+.c-oro { background: var(--terciario-cont); color: var(--sobre-terciario-cont); }
+.celda.suspendido, .mes.suspendido { background: var(--terciario-cont); color: var(--sobre-terciario-cont); }
+.opciones-radio { margin-bottom: 14px; }
+.opciones-radio label { flex: 1; display: flex; cursor: pointer; }
+.opciones-radio label + label { border-left: 1px solid var(--contorno); }
+.opciones-radio input { position: absolute; opacity: 0; pointer-events: none; }
+.opciones-radio span { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 44px; font-weight: 600; font-size: 15px; }
+.opciones-radio input:checked + span { background: var(--terciario-cont); color: var(--sobre-terciario-cont); }
+.opciones-radio input:checked + span::before { content: "✓ "; }
+.opciones-radio input:focus-visible + span { outline: 2px solid var(--primario); outline-offset: -2px; }
+.chip input[type=radio]:checked + span::before { content: "✓ "; }

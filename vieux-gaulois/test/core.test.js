@@ -703,3 +703,44 @@ test('grupos de mensajes: sólo integrantes, y apoderados de los jugadores', () 
   C.applyAction(db, DIR, { type: 'grupo.eliminar', payload: { id: g.id } });
   assert.ok(!db.mensajes.some((mm) => mm.hilo === 'grp:' + g.id));
 });
+
+test('eliminar con motivo: jugadores, entrenadores y apoderados', () => {
+  const db = C.dbEjemplo();
+  const CAM = C.rutDesdeCuerpo(18765432), APO = C.rutDesdeCuerpo(15678901);
+  assert.throws(() => C.applyAction(db, DIR, { type: 'jugador.activo', payload: { rut: CAM, activo: false } }), /motivo/);
+  assert.throws(() => C.applyAction(db, DIR, { type: 'jugador.activo', payload: { rut: CAM, activo: false, motivo: 'Otro' } }), /motivo/);
+  C.applyAction(db, DIR, { type: 'jugador.activo', payload: { rut: CAM, activo: false, motivo: 'Transferido', detalle: 'Club Ovalle' } });
+  const cam = db.usuarios.find((u) => u.rut === CAM);
+  assert.strictEqual(cam.activo, false);
+  assert.strictEqual(cam.baja.motivo, 'Transferido');
+  assert.strictEqual(C.viewFor(db, CAM), null);
+  C.applyAction(db, DIR, { type: 'jugador.activo', payload: { rut: CAM, activo: true } });
+  assert.ok(cam.activo && !cam.baja && cam.bajasAnteriores.length === 1);
+  C.applyAction(db, DIR, { type: 'staff.activo', payload: { rut: ENT, activo: false, motivo: 'Renuncia' } });
+  assert.strictEqual(db.usuarios.find((u) => u.rut === ENT).baja.motivo, 'Renuncia');
+  C.applyAction(db, DIR, { type: 'apoderado.eliminar', payload: { id: APO, motivo: 'Otro', detalle: 'Cambio de apoderado' } });
+  const a = db.usuarios.find((u) => u.rut === APO);
+  assert.ok(!a.activo && a.hijos.length === 0 && a.hijosAntes.length === 2);
+  C.applyAction(db, DIR, { type: 'apoderado.reactivar', payload: { id: APO } });
+  assert.strictEqual(a.hijos.length, 2);
+});
+
+test('cuota suspendida o rebajada por meses, caso a caso', () => {
+  const db = C.dbEjemplo();
+  const CAM = C.rutDesdeCuerpo(18765432);
+  const cam = db.usuarios.find((u) => u.rut === CAM);
+  const base = C.cuotaDe(db, cam);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'cuota.ajuste', payload: { rut: CAM, tipo: 'suspension', desdeAnio: ANIO, desdeMes: 2, meses: 2, motivo: 'x' } }), /permiso/i);
+  assert.throws(() => C.applyAction(db, DIR, { type: 'cuota.ajuste', payload: { rut: CAM, tipo: 'suspension', desdeAnio: ANIO, desdeMes: 2, meses: 2 } }), /motivo/);
+  // Suspensión noviembre-enero: cruza de año.
+  C.applyAction(db, DIR, { type: 'cuota.ajuste', payload: { rut: CAM, tipo: 'suspension', desdeAnio: ANIO, desdeMes: 10, meses: 3, motivo: 'Rotura de ligamento' } });
+  assert.strictEqual(C.cuotaMes(db, cam, ANIO, 10), 0);
+  assert.strictEqual(C.cuotaMes(db, cam, ANIO + 1, 0), 0);
+  assert.strictEqual(C.cuotaMes(db, cam, ANIO + 1, 1), base);
+  assert.deepStrictEqual(C.finAjuste(cam.ajustesCuota[0]), { anio: ANIO + 1, mes: 0 });
+  assert.ok(!C.mesesAdeudados(db, CAM, ANIO, ANIO + '-12-31').includes(10));
+  C.applyAction(db, DIR, { type: 'cuota.ajuste', payload: { rut: CAM, tipo: 'rebaja', porcentaje: 50, desdeAnio: ANIO, desdeMes: 3, meses: 1, motivo: 'Lesión' } });
+  assert.strictEqual(C.cuotaMes(db, cam, ANIO, 3), Math.round(base / 2));
+  C.applyAction(db, DIR, { type: 'cuota.quitarAjuste', payload: { rut: CAM, id: cam.ajustesCuota[0].id } });
+  assert.strictEqual(C.cuotaMes(db, cam, ANIO, 10), base);
+});

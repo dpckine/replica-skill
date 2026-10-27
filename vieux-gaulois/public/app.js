@@ -69,7 +69,7 @@
     filtroCat: leerLS('vg_cat') || '', busqueda: '', anioFin: ANIO, verInactivos: false, verPasados: false,
     hilo: null, borrador: {}, piz: null,
     // Apoderado: S.apo guarda la vista completa (todos sus hijos); S.view es la del hijo elegido.
-    apo: null, hijo: leerLS('vg_hijo') || '', catEst: '', catFis: '', verDevueltos: false, verApo: false, stickerClaro: false,
+    apo: null, hijo: leerLS('vg_hijo') || '', catEst: '', catFis: '', verDevueltos: false, verApo: false, verApoBajas: false, stickerClaro: false,
   };
 
   // ---------- Backend: servidor real o modo demo local ----------
@@ -322,6 +322,8 @@
     if (!S.view.config.mesesCobro.includes(mes)) return 'no';
     const p = C.pagoMes(S.view, rut, anio, mes);
     if (p && p.pagado) return 'pagado';
+    const j = usuario(rut);
+    if (j && C.cuotaMes(S.view, j, anio, mes) === 0) return 'suspendido';
     const venc = anio < ANIO || (anio === ANIO && (mes < new Date().getMonth() || (mes === new Date().getMonth() && new Date().getDate() > S.view.config.diaVencimiento)));
     return venc ? 'vencido' : 'pendiente';
   }
@@ -588,7 +590,8 @@
   // ---------- Jugadores ----------
   function vistaJugadores() {
     const seg = esStaff() ? '<div class="filtros">' + segmentado('verApo', S.verApo ? 1 : 0, [[0, 'Jugadores'], [1, 'Apoderados']]) + '</div>' : '';
-    if (S.verApo) return seg + '<div class="filtros"><input type="search" placeholder="Buscar apoderado o jugador" value="' + h(S.busqueda) + '" data-cambio="busqueda"></div>' + vistaApoderados();
+    if (S.verApo) return seg + '<div class="filtros"><input type="search" placeholder="Buscar apoderado o jugador" value="' + h(S.busqueda) + '" data-cambio="busqueda">' +
+      '<label class="chip"><input type="checkbox" data-cambio="verApoBajas"' + (S.verApoBajas ? ' checked' : '') + '><span>Ver eliminados</span></label></div>' + vistaApoderados();
     let lista = filtrarCat(jugadores(S.verInactivos));
     const q = S.busqueda.toLowerCase();
     if (q) lista = lista.filter((j) => j.nombre.toLowerCase().includes(q) || j.rut.includes(q.replace(/\./g, '')));
@@ -599,11 +602,11 @@
       return '<li data-act="verJugador" data-rut="' + j.rut + '">' + (j.foto ? avatarFoto(j, 'camiseta foto') : camiseta(j)) +
         '<div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(etiqueta(j)) + (j.posicion ? ' · ' + h(j.posicion) : '') + '</small>' +
         '<div class="fila insignias">' + habInsignia(j.rut) + (les && !j.lesionado ? insignia('Lesión reportada', 'alerta') : '') + (deuda ? insignia(deuda + ' cuota' + (deuda > 1 ? 's' : '') + ' atrasada' + (deuda > 1 ? 's' : ''), 'mal') : '') +
-        (sinFirma ? insignia(menor(j) ? 'Falta firma del apoderado' : 'Sin consentimiento', 'alerta') : '') + (menor(j) && !apoderados(j.rut).length ? insignia('Sin apoderado', 'mal') : '') + (cuentaEntrenador(j.rut) ? insignia('Entrenador', 'oro') : '') + (j.activo === false ? insignia('Inactivo') : '') + '</div></div>' +
+        (sinFirma ? insignia(menor(j) ? 'Falta firma del apoderado' : 'Sin consentimiento', 'alerta') : '') + (menor(j) && !apoderados(j.rut).length ? insignia('Sin apoderado', 'mal') : '') + (cuentaEntrenador(j.rut) ? insignia('Entrenador', 'oro') : '') + (j.activo === false ? insignia('Eliminado' + (j.baja ? ' · ' + j.baja.motivo : ''), 'mal') : '') + '</div></div>' +
         '<span class="chevron">' + icono('flecha') + '</span></li>';
     }).join('');
     return seg + '<div class="filtros"><input type="search" placeholder="Buscar por nombre o RUT" value="' + h(S.busqueda) + '" data-cambio="busqueda">' + filtroCategoria() +
-      (esDir() ? '<label class="chip"><input type="checkbox" data-cambio="verInactivos"' + (S.verInactivos ? ' checked' : '') + '><span>Ver inactivos</span></label>' : '') + '</div>' +
+      (esDir() ? '<label class="chip"><input type="checkbox" data-cambio="verInactivos"' + (S.verInactivos ? ' checked' : '') + '><span>Ver eliminados</span></label>' : '') + '</div>' +
       seccion(lista.length + ' jugador' + (lista.length === 1 ? '' : 'es'), lista.length ? '<ul class="lista clic">' + filas + '</ul>' : vacio('No hay jugadores con ese filtro.'));
   }
 
@@ -642,11 +645,16 @@
 
   function vistaApoderados() {
     const q = S.busqueda.toLowerCase();
-    let lista = todosApoderados();
+    let lista = S.verApoBajas ? S.view.usuarios.filter((u) => u.rol === 'apoderado' && u.activo === false).sort((a, b) => a.nombre.localeCompare(b.nombre)) : todosApoderados();
     if (q) lista = lista.filter((a) => a.nombre.toLowerCase().includes(q) || (a.hijos || []).some((r) => (usuario(r) || { nombre: '' }).nombre.toLowerCase().includes(q)));
     const filas = lista.map((a) => {
       const hijos = (a.hijos || []).map(usuario).filter(Boolean);
       const sinRut = C.apoderadoSinRut(a);
+      if (a.activo === false) {
+        const antes = (a.hijosAntes || []).map(usuario).filter(Boolean);
+        return '<li class="envolver"><span class="avatar-chat">' + h(iniciales(a.nombre)) + '</span><div class="crece"><b>' + h(a.nombre) + '</b><small>' + (antes.length ? 'Era apoderado de ' + antes.map((j) => h(j.nombre.split(/\s+/).slice(0, 2).join(' '))).join(', ') : 'Sin jugadores') + '</small>' +
+          '<div class="fila insignias">' + insignia('Eliminado · ' + textoBaja(a), 'mal') + '<button class="btn mini" data-act="reactivarApoderado" data-id="' + h(a.rut) + '">Reactivar</button></div></div></li>';
+      }
       return '<li data-act="editarApoderado" data-id="' + h(a.rut) + '"><span class="avatar-chat">' + h(iniciales(a.nombre)) + '</span><div class="crece"><b>' + h(a.nombre) + '</b>' +
         '<small>' + (hijos.length ? 'Apoderado de ' + hijos.map((j) => h(j.nombre.split(/\s+/).slice(0, 2).join(' '))).join(', ') : 'Sin jugadores asignados') + '</small>' +
         '<div class="fila insignias">' + (sinRut ? insignia('Sin RUT · aún no entra', 'alerta') : insignia(C.formatearRut(a.rut))) + (a.telefono ? insignia(a.telefono) : '') + '</div></div><span class="chevron">' + icono('flecha') + '</span></li>';
@@ -667,7 +675,7 @@
       campo('Teléfono', input('telefono', a.telefono, 'type="tel"')) + campo('Email', input('email', a.email, 'type="email"')) + '</div>' +
       (sinRut ? '<p class="ayuda">Puedes crearlo sólo con el nombre. Cuando le agregues el RUT podrá entrar (clave: los 4 primeros dígitos) y firmar por sus hijos.</p>' : '') +
       '<p class="sub">Jugadores a su cargo</p><div class="tarjeta lista-chequeo"><ul class="lista">' + js.map((j) => '<li><label class="check-citar"><input type="checkbox" name="hijos[]" value="' + h(j.rut) + '"' + ((a.hijos || []).includes(j.rut) ? ' checked' : '') + '><span class="marca"></span><div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(etiqueta(j)) + (menor(j) ? ' · menor de edad' : '') + (otros(j) ? ' · ya tiene ' + otros(j) + ' apoderado' + (otros(j) > 1 ? 's' : '') : '') + '</small></div></label></li>').join('') + '</ul></div>' +
-      pie(nuevo ? 'Crear apoderado' : 'Guardar', nuevo ? '' : '<button type="button" class="btn ancho peligro" data-act="borrarApoderado" data-id="' + h(a.rut) + '">' + (C.apoderadoSinRut(a) ? 'Eliminar apoderado' : 'Desactivar cuenta') + '</button>') + '</form>';
+      pie(nuevo ? 'Crear apoderado' : 'Guardar', nuevo ? '' : '<button type="button" class="btn ancho peligro" data-act="borrarApoderado" data-id="' + h(a.rut) + '">Eliminar apoderado</button>') + '</form>';
   }
 
   function fichaJugador(rut) {
@@ -676,7 +684,7 @@
     const les = S.view.lesiones.filter((l) => l.rut === rut).sort((x, y) => y.fecha.localeCompare(x.fecha));
     const docs = (S.view.documentos || []).filter((d) => C.documentoAplica(d, rut));
     const fila = (k, v) => '<li><div class="crece"><small>' + h(k) + '</small></div><div class="valor">' + v + '</div></li>';
-    let html = '<div class="ficha-cab">' + (j.foto ? avatarFoto(j, 'camiseta foto') : camiseta(j)) + '<div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(C.formatearRut(j.rut)) + '</small><small>' + h(etiqueta(j)) + (j.posicion ? ' · ' + h(j.posicion) : '') + '</small></div>' + habInsignia(rut) + '</div>' +
+    let html = '<div class="ficha-cab">' + (j.foto ? avatarFoto(j, 'camiseta foto') : camiseta(j)) + '<div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(C.formatearRut(j.rut)) + '</small><small>' + h(etiqueta(j)) + (j.posicion ? ' · ' + h(j.posicion) : '') + '</small><div class="fila insignias">' + habInsignia(rut) + '</div></div></div>' +
       '<div class="tarjeta"><ul class="lista">' +
       fila('Edad', C.edad(j.fechaNac) == null ? '–' : C.edad(j.fechaNac) + ' años') +
       fila('Teléfono', h(j.telefono || '–')) + fila('Email', h(j.email || '–')) +
@@ -689,7 +697,7 @@
         fila('Cuotas atrasadas', deuda.length ? deuda.map((m) => C.MESES[m]).join(', ') : 'Al día');
     }
     html += docs.map((d) => { const f = C.firmaDe(S.view, rut, d); return fila(d.titulo, f ? insignia('Firmado ' + fCorta(f.fecha), 'ok') : insignia('Pendiente', 'alerta')); }).join('');
-    html += '</ul></div>' + estadoHtml;
+    html += '</ul></div>' + (j.activo === false && j.baja ? '<div class="aviso mal">Eliminado · ' + h(textoBaja(j)) + '</div>' : '') + estadoHtml + (esDir() ? seccionAjustes(j) : '');
     // Apoderados: obligatorios para menores; su cuenta firma y gestiona por el jugador.
     const aps = apoderados(rut);
     html += '<h3 class="sub">Apoderado' + (aps.length > 1 ? 's' : '') + '</h3><div class="tarjeta">' + (aps.length ? '<ul class="lista">' + aps.map((a) => {
@@ -713,8 +721,58 @@
     html += '<div class="modal-pie columna"><button class="btn primario ancho" data-act="editarJugador" data-rut="' + rut + '">Editar datos</button>' +
       '<button class="btn ancho" data-act="credencial" data-rut="' + rut + '">' + icono('credencial') + ' Credencial y foto</button>' +
       '<button class="btn ancho" data-act="lesionPara" data-rut="' + rut + '">Registrar lesión o dolor</button>' +
-      (esDir() ? '<button class="btn ancho" data-act="resetClave" data-rut="' + rut + '">Restablecer clave (4 dígitos del RUT)</button><button class="btn ancho peligro" data-act="activoJugador" data-rut="' + rut + '" data-activo="' + (j.activo === false ? '1' : '') + '">' + (j.activo === false ? 'Reactivar jugador' : 'Dar de baja') + '</button>' : '') + '</div>';
+      (esDir() ? '<button class="btn ancho" data-act="resetClave" data-rut="' + rut + '">Restablecer clave (4 dígitos del RUT)</button><button class="btn ancho peligro" data-act="activoJugador" data-rut="' + rut + '" data-activo="' + (j.activo === false ? '1' : '') + '">' + (j.activo === false ? 'Reactivar jugador' : 'Eliminar jugador') + '</button>' : '') + '</div>';
     return html;
+  }
+
+  // ---------- Suspensión o rebaja de cuota (caso a caso) ----------
+  const textoAjuste = (a) => {
+    const f = C.finAjuste(a);
+    const rango = C.MESES[a.desdeMes] + (a.desdeAnio !== ANIO ? ' ' + a.desdeAnio : '') + (a.meses > 1 ? ' a ' + C.MESES[f.mes] + (f.anio !== a.desdeAnio || f.anio !== ANIO ? ' ' + f.anio : '') : '');
+    return (a.tipo === 'suspension' ? 'Cuota suspendida' : 'Cuota rebajada ' + a.porcentaje + '%') + ' · ' + rango;
+  };
+  const ajusteVigente = (a) => { const f = C.finAjuste(a); return f.anio * 12 + f.mes >= ANIO * 12 + new Date().getMonth(); };
+  function avisoAjustes(j) {
+    const vig = (j.ajustesCuota || []).filter(ajusteVigente);
+    return vig.length ? '<div class="aviso info" style="margin:12px 0 0">' + vig.map((a) => '<b>' + h(textoAjuste(a)) + '</b>' + (a.motivo ? '<br><small>' + h(a.motivo) + '</small>' : '')).join('<br>') + '</div>' : '';
+  }
+  function seccionAjustes(j) {
+    const ajs = (j.ajustesCuota || []).slice().reverse();
+    return '<h3 class="sub">Cuota</h3><div class="tarjeta">' +
+      (j.lesionado && !ajs.some(ajusteVigente) ? '<div class="aviso">Está lesionado: si no puede entrenar por un tiempo, puedes suspender o rebajar su cuota.</div>' : '') +
+      (ajs.length ? '<ul class="lista">' + ajs.map((a) => '<li class="envolver"><span class="ico-celda ' + (a.tipo === 'suspension' ? 'c-rojo' : 'c-oro') + '">' + icono('finanzas') + '</span><div class="crece"><b>' + h(textoAjuste(a)) + '</b><small>' + h(a.motivo) + ' · ' + h(fCorta(a.fecha)) + (ajusteVigente(a) ? '' : ' · terminó') + '</small></div>' +
+        '<button class="btn mini peligro" data-act="quitarAjuste" data-rut="' + h(j.rut) + '" data-id="' + h(a.id) + '">Quitar</button></li>').join('') + '</ul>'
+        : '<p class="ayuda" style="margin:0 0 12px">Paga ' + clp(C.cuotaDe(S.view, j)) + ' al mes. Para una lesión larga u otro caso puedes suspender o rebajar la cuota por algunos meses.</p>') +
+      '<button class="btn ancho" data-act="ajusteCuota" data-rut="' + h(j.rut) + '">' + icono('mas2') + ' Suspender o rebajar cuota</button></div>';
+  }
+  function formAjuste(j) {
+    const mes = new Date().getMonth();
+    return '<form id="form-modal"><input type="hidden" name="rut" value="' + h(j.rut) + '"><p class="ayuda"><b>' + h(j.nombre) + '</b> · cuota ' + clp(C.cuotaDe(S.view, j)) + '</p>' +
+      '<div class="estado-sel opciones-radio">' + [['suspension', 'Suspender'], ['rebaja', 'Rebajar']].map(([v, t], i) => '<label><input type="radio" name="tipo" value="' + v + '"' + (i === 0 ? ' checked' : '') + ' data-ajuste-tipo><span>' + t + '</span></label>').join('') + '</div>' +
+      '<div class="campos">' + campo('Desde', '<select name="desdeMes">' + C.MESES.map((n, i) => '<option value="' + i + '"' + (i === mes ? ' selected' : '') + '>' + C.MESES_LARGOS[i] + '</option>').join('') + '</select>') +
+      campo('Año', '<select name="desdeAnio">' + [ANIO, ANIO + 1].map((a) => '<option>' + a + '</option>').join('') + '</select>') +
+      campo('Cuántos meses', input('meses', 2, 'type="number" min="1" max="24" required inputmode="numeric"')) +
+      campo('Rebaja (%)', input('porcentaje', 50, 'type="number" min="1" max="99" inputmode="numeric"'), ' id="campo-porcentaje" hidden') + '</div>' +
+      campo('Motivo', input('motivo', j.lesionado ? 'Lesión' : '', 'required maxlength="200" placeholder="Ej: rotura de ligamento, licencia médica"')) +
+      '<p class="ayuda">Los meses suspendidos no se cobran ni aparecen como deuda, y no se envían recordatorios. Los meses ya pagados no cambian.</p>' + pie('Guardar') + '</form>';
+  }
+
+  // ---------- Eliminar cuentas (con motivo) ----------
+  // Eliminar deja la cuenta inactiva: no puede entrar, pero se guardan sus pagos y su historial.
+  const textoBaja = (u) => (u.baja ? u.baja.motivo + (u.baja.detalle ? ': ' + u.baja.detalle : '') + ' · ' + fCorta(u.baja.fecha) : '');
+  function formBaja(u) {
+    const que = u.rol === 'jugador' ? 'jugador' : u.rol === 'apoderado' ? 'apoderado' : u.rol === 'directiva' ? 'integrante de la directiva' : 'entrenador';
+    return '<form id="form-modal"><p class="ayuda">Vas a eliminar a <b>' + h(u.nombre) + '</b> (' + que + '). Ya no podrá entrar a la app' + (u.rol === 'jugador' ? ' ni aparecerá en nóminas y cobros' : '') + '. Su historial queda guardado y lo puedes reactivar.</p>' +
+      '<p class="sub">Motivo</p><div class="chequeos">' + C.MOTIVOS_BAJA.map((m, i) => '<label class="chip"><input type="radio" name="motivo" value="' + m + '"' + (i === 0 ? ' checked' : '') + '><span>' + m + '</span></label>').join('') + '</div>' +
+      campo('Detalle', input('detalle', '', 'maxlength="200" placeholder="Ej: a qué club se fue, o el motivo"')) + pie('Eliminar') + '</form>';
+  }
+  function abrirBaja(u, accionTipo, payload, despues) {
+    abrirModal('Eliminar ' + u.nombre.split(/\s+/)[0], formBaja(u), async (o) => {
+      if (o.motivo === 'Otro' && !String(o.detalle || '').trim()) throw new Error('Cuenta brevemente el motivo en "Detalle"');
+      const ok = await accion(accionTipo, Object.assign({}, payload, { activo: false, motivo: o.motivo, detalle: o.detalle }), u.nombre + ' eliminado · ' + o.motivo);
+      if (ok && despues) despues();
+      return ok;
+    });
   }
 
   // ---------- Finanzas (directiva) ----------
@@ -728,11 +786,12 @@
       const celdas = C.MESES.map((nom, m) => {
         const e = estadoMes(j.rut, anio, m);
         const p = C.pagoMes(S.view, j.rut, anio, m);
-        if (e === 'vencido' || e === 'pagado') esperado += e === 'pagado' ? Number(p.monto) || 0 : cuota;
+        const cm = C.cuotaMes(S.view, j, anio, m);
+        if (e === 'vencido' || e === 'pagado') esperado += e === 'pagado' ? Number(p.monto) || 0 : cm;
         if (e === 'pagado') recaudado += Number(p.monto) || 0;
-        if (e === 'vencido') deuda += cuota;
-        const txt = e === 'pagado' ? '✓' : e === 'vencido' ? '!' : e === 'no' ? '·' : '';
-        const tit = nom + ': ' + (e === 'pagado' ? 'pagado ' + clp(p.monto) + ' el ' + p.fecha : e === 'vencido' ? 'vencido' : e === 'no' ? 'no se cobra' : 'por vencer');
+        if (e === 'vencido') deuda += cm;
+        const txt = e === 'pagado' ? '✓' : e === 'vencido' ? '!' : e === 'no' ? '·' : e === 'suspendido' ? '–' : cm < cuota ? '%' : '';
+        const tit = nom + ': ' + (e === 'pagado' ? 'pagado ' + clp(p.monto) + ' el ' + p.fecha : e === 'vencido' ? 'vencido' + (cm < cuota ? ' (rebajada a ' + clp(cm) + ')' : '') : e === 'no' ? 'no se cobra' : e === 'suspendido' ? 'cuota suspendida' : 'por vencer' + (cm < cuota ? ' (rebajada a ' + clp(cm) + ')' : ''));
         return '<td class="c"><button class="celda ' + e + '" title="' + h(tit) + '" ' + (e === 'no' ? 'disabled' : 'data-act="pago" data-rut="' + j.rut + '" data-mes="' + m + '"') + '>' + txt + '</button></td>';
       }).join('');
       const fed = C.federativoPagado(S.view, j.rut, anio);
@@ -1316,8 +1375,8 @@
     return '<p class="intro">Cuentas de la directiva y del cuerpo técnico. Cada uno entra con su usuario y clave.</p>' + seccion(staff.length + ' cuentas', '<ul class="lista">' + staff.map((u) => {
         const j = u.jugadorRut && usuario(u.jugadorRut);
         return '<li class="envolver"><div class="crece"><b>' + h(u.nombre) + '</b><small>Usuario: ' + h(u.usuario || u.rut) + ' · ' + h(u.cargo || u.rol) + (j ? ' · también juega en ' + h(j.categoria) : '') + '</small>' +
-          '<div class="fila insignias">' + insignia(u.rol === 'directiva' ? 'Directiva' : 'Entrenador', u.rol === 'directiva' ? 'oro' : '') + (u.activo === false ? insignia('Inactivo', 'mal') : '') +
-          (u.rut !== S.view.yo ? '<button class="btn mini" data-act="definirClave" data-rut="' + u.rut + '">Clave</button><button class="btn mini peligro" data-act="activoStaff" data-rut="' + u.rut + '" data-activo="' + (u.activo === false ? '1' : '') + '">' + (u.activo === false ? 'Activar' : 'Desactivar') + '</button>' : '') + '</div></div></li>';
+          '<div class="fila insignias">' + insignia(u.rol === 'directiva' ? 'Directiva' : 'Entrenador', u.rol === 'directiva' ? 'oro' : '') + (u.activo === false ? insignia('Eliminado' + (u.baja ? ' · ' + u.baja.motivo : ''), 'mal') : '') +
+          (u.rut !== S.view.yo ? '<button class="btn mini" data-act="definirClave" data-rut="' + u.rut + '">Clave</button><button class="btn mini peligro" data-act="activoStaff" data-rut="' + u.rut + '" data-activo="' + (u.activo === false ? '1' : '') + '">' + (u.activo === false ? 'Reactivar' : 'Eliminar') + '</button>' : '') + '</div></div></li>';
       }).join('') + '</ul>' +
         '<button class="btn primario ancho" data-act="nuevoStaff" style="margin-top:12px">' + icono('mas2') + ' Agregar entrenador o directiva</button>', btnTexto('Agregar', 'nuevoStaff'), 'Cada uno entra con su usuario y clave. Los apoderados se crean en Jugadores → Apoderados.');
   }
@@ -1444,8 +1503,8 @@
           let est = estadoMes(j.rut, ANIO, m);
           const inf = est !== 'pagado' && est !== 'no' && informePendiente('cuota', m);
           if (inf) est = 'informado';
-          return '<div class="mes ' + est + '">' + nom + '<span>' + ({ pagado: '✓', vencido: 'Debe', pendiente: '–', no: '', informado: '⏳' }[est]) + '</span></div>';
-        }).join('') + '</div>' + (proxMes != null ? bloquePago('cuota', 'Pagar cuota', proxMes) : ''), '', pagados + ' de ' + cobrados.length + ' cuotas pagadas. ⏳ = pago informado, en revisión.') +
+          return '<div class="mes ' + est + '">' + nom + '<span>' + ({ pagado: '✓', vencido: 'Debe', pendiente: '–', no: '', informado: '⏳', suspendido: 'Susp.' }[est]) + '</span></div>';
+        }).join('') + '</div>' + avisoAjustes(j) + (proxMes != null ? bloquePago('cuota', 'Pagar cuota', proxMes) : ''), '', pagados + ' de ' + cobrados.length + ' cuotas pagadas. ⏳ = pago informado, en revisión.') +
       seccion('Federativo ' + ANIO, '<div class="fila entre"><div><b>' + clp(S.view.config.montoFederativo) + '</b><br><small class="suave">Necesario para jugar partidos oficiales</small></div>' + (fed ? insignia('Pagado', 'ok') : insignia('Pendiente', 'mal')) + '</div>' +
         (fed ? '' : bloquePago('federativo', 'Pagar federativo'))) +
       (otros.length ? seccion('Otros cobros', otros.map((c) => {
@@ -2249,7 +2308,7 @@
     const venc = String(S.view.config.diaVencimiento).padStart(2, '0') + '/' + String(mes + 1).padStart(2, '0');
     const vencida = estadoMes(j.rut, ANIO, mes) === 'vencido';
     return 'Hola ' + c.nombre.split(/\s+/)[0] + ', ' + (vencida ? 'te contamos que ' : 'te recordamos que ') + (c.rut !== j.rut ? 'la cuota de ' + j.nombre.split(/\s+/)[0] : 'tu cuota') +
-      ' de ' + C.MESES_LARGOS[mes].toLowerCase() + ' (' + clp(C.cuotaDe(S.view, j)) + ') ' + (vencida ? 'venció el ' + venc + ' y aún aparece pendiente.' : 'vence el ' + venc + '.') +
+      ' de ' + C.MESES_LARGOS[mes].toLowerCase() + ' (' + clp(C.cuotaMes(S.view, j, ANIO, mes)) + ') ' + (vencida ? 'venció el ' + venc + ' y aún aparece pendiente.' : 'vence el ' + venc + '.') +
       ' Puedes pagar e informar el pago en la app de Vieux Gaulois. ¡Gracias!';
   }
 
@@ -2457,20 +2516,25 @@
       if (ok && d.volver) { abrirModal('Ficha del jugador', fichaJugador(d.volver)); return false; }
       return ok;
     }),
-    borrarApoderado: (d) => {
-      const a = usuario(d.id);
-      if (!confirm(C.apoderadoSinRut(a) ? '¿Eliminar a ' + a.nombre + '?' : '¿Desactivar la cuenta de ' + a.nombre + '? Ya no podrá entrar ni ver a sus hijos.')) return;
-      cerrarModal();
-      enviarConError(accion('apoderado.eliminar', { id: d.id }, 'Listo'));
-    },
+    borrarApoderado: (d) => abrirBaja(usuario(d.id), 'apoderado.eliminar', { id: d.id }),
     estadoJugador: async (d) => {
       const ok = await accion('jugador.estado', { rut: d.rut, estado: d.e }, d.e === 'lesionado' ? 'Marcado como lesionado' : 'Marcado como habilitado');
       if (ok && !$('#modal').hidden) abrirModal('Ficha del jugador', fichaJugador(d.rut));
     },
     quitarApoderado: (d) => { if (confirm('¿Quitar a este apoderado? Ya no podrá ver ni gestionar a este jugador.')) accion('apoderado.desvincular', { rut: d.rut, apoderadoRut: d.apoderado }, 'Apoderado quitado').then((ok) => { if (ok) abrirModal('Ficha del jugador', fichaJugador(d.rut)); }); },
     activoJugador: (d) => {
-      if (!confirm(d.activo ? '¿Reactivar a este jugador?' : '¿Dar de baja a este jugador? Ya no podrá ingresar.')) return;
-      enviarConError(accion('jugador.activo', { rut: d.rut, activo: !!d.activo }, 'Listo'));
+      if (!d.activo) { abrirBaja(usuario(d.rut), 'jugador.activo', { rut: d.rut }); return; }
+      if (confirm('¿Reactivar a este jugador?')) enviarConError(accion('jugador.activo', { rut: d.rut, activo: true }, 'Jugador reactivado'));
+    },
+    ajusteCuota: (d) => abrirModal('Suspender o rebajar cuota', formAjuste(usuario(d.rut)), async (o) => {
+      const ok = await accion('cuota.ajuste', o, o.tipo === 'suspension' ? 'Cuota suspendida' : 'Cuota rebajada');
+      if (ok) abrirModal('Ficha del jugador', fichaJugador(d.rut));
+      return false;
+    }),
+    quitarAjuste: async (d) => {
+      if (!confirm('¿Quitar esta suspensión o rebaja? La cuota vuelve a cobrarse completa en esos meses.')) return;
+      const ok = await accion('cuota.quitarAjuste', { rut: d.rut, id: d.id }, 'Listo');
+      if (ok) abrirModal('Ficha del jugador', fichaJugador(d.rut));
     },
     resetClave: (d) => {
       if (!confirm('¿Restablecer la clave a los primeros 4 dígitos del RUT?')) return;
@@ -2488,7 +2552,7 @@
         return;
       }
       abrirModal('Pago ' + C.MESES[mes] + ' ' + anio, '<form id="form-modal"><p class="ayuda"><b>' + h(j.nombre) + '</b> · ' + h(etiqueta(j)) + '</p>' +
-        '<div class="campos">' + campo('Monto', input('monto', C.cuotaDe(S.view, j), 'type="number" min="0" required inputmode="numeric"')) + campo('Fecha de pago', input('fecha', HOY, 'type="date"')) +
+        '<div class="campos">' + campo('Monto', input('monto', C.cuotaMes(S.view, j, anio, mes), 'type="number" min="0" required inputmode="numeric"')) + campo('Fecha de pago', input('fecha', HOY, 'type="date"')) +
         campo('Método', '<select name="metodo">' + opciones(['Transferencia', 'Link de pago', 'Efectivo', 'Débito', 'Crédito', 'Otro'], 'Transferencia') + '</select>') + '</div>' + pie('Registrar pago') + '</form>',
       (o) => accion('pago.marcar', Object.assign(o, { rut, mes, anio, pagado: true }), 'Pago registrado'));
     },
@@ -2775,7 +2839,11 @@
         campo('Nueva clave', input('clave', '', 'required minlength="4" autocomplete="new-password"')) + pie('Guardar clave') + '</form>',
       (o) => accion('clave.definir', { rut: u.rut, clave: o.clave }, 'Clave actualizada'));
     },
-    activoStaff: (d) => { if (confirm(d.activo ? '¿Activar esta cuenta?' : '¿Desactivar esta cuenta? No podrá ingresar.')) accion('staff.activo', { rut: d.rut, activo: !!d.activo }, 'Listo'); },
+    activoStaff: (d) => {
+      if (!d.activo) { abrirBaja(usuario(d.rut), 'staff.activo', { rut: d.rut }); return; }
+      if (confirm('¿Reactivar esta cuenta?')) accion('staff.activo', { rut: d.rut, activo: true }, 'Cuenta reactivada');
+    },
+    reactivarApoderado: (d) => { if (confirm('¿Reactivar a este apoderado? Vuelve a quedar a cargo de los mismos jugadores.')) enviarConError(accion('apoderado.reactivar', { id: d.id }, 'Apoderado reactivado')); },
     reiniciarDemo: () => {
       if (!confirm('¿Borrar todos los cambios y volver a los datos de ejemplo?')) return;
       Local.db = C.dbEjemplo(); try { Local.guardar(); } catch (e) { /* sin almacenamiento */ } Local.salir(); S.view = null; S.apo = null; render();
@@ -2832,8 +2900,10 @@
     const k = ev.target.dataset && ev.target.dataset.cambio;
     if (k === 'filtroCat') { S.filtroCat = ev.target.value; guardarLS('vg_cat', S.filtroCat); render(); }
     else if (k === 'verInactivos') { S.verInactivos = ev.target.checked; render(); }
+    else if (k === 'verApoBajas') { S.verApoBajas = ev.target.checked; render(); }
     else if (k === 'catEst') { S.catEst = ev.target.value; render(); }
     else if (k === 'catFis') { S.catFis = ev.target.value; render(); }
+    if (ev.target.hasAttribute && ev.target.hasAttribute('data-ajuste-tipo')) { const c = $('#campo-porcentaje'); if (c) c.hidden = ev.target.value !== 'rebaja'; }
     // Al elegir un apoderado existente se ocultan los campos para crear uno nuevo.
     if (ev.target.hasAttribute && ev.target.hasAttribute('data-apo-elegir')) ev.target.form.querySelectorAll('[data-apo-nuevo]').forEach((e) => { e.hidden = !!ev.target.value; });
     if (ev.target.hasAttribute && ev.target.hasAttribute('data-eval-cat')) abrirEvaluacion(ev.target.value, ev.target.form.fecha.value || HOY);

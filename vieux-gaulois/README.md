@@ -129,6 +129,12 @@ Al citar a un jugador no habilitado, la app avisa al entrenador.
 - **Encuestas:** para todo el club o una categoría, con fecha de cierre. Los votos son anónimos.
 - **Galería:** sólo los entrenadores suben fotos (plantel, partido o evento), máximo 3 por álbum
   y achicadas en el teléfono antes de subirlas para no llenar el servidor.
+- **Eliminar con motivo:** jugadores, entrenadores, directiva y apoderados se eliminan indicando el
+  motivo (transferido, renuncia u otro, con detalle). La cuenta queda inactiva: no entra, pero se
+  guardan sus pagos e historial, aparece en "Ver eliminados" y se puede reactivar.
+- **Suspender o rebajar la cuota:** desde la ficha del jugador la directiva suspende o rebaja (%)
+  la cuota por una cantidad de meses, con el motivo (p. ej. una lesión larga). Esos meses no se
+  cobran ni cuentan como deuda, y no se envían recordatorios.
 - **Grupos de mensajes:** la directiva y los entrenadores crean grupos de texto (como los de
   WhatsApp) con jugadores, cuerpo técnico y apoderados; se puede sumar una categoría completa con
   un toque. Los apoderados de los jugadores del grupo también lo ven y pueden escribir.

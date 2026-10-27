@@ -120,6 +120,20 @@
     return Math.round(base * (1 - desc / 100));
   }
 
+  // Suspensión o rebaja de cuota por un período (p. ej. lesión larga). Se decide caso a caso.
+  // Meses consecutivos desde (desdeAnio, desdeMes); si hay dos que se cruzan, manda el último.
+  function ajusteCuota(j, anio, mes) {
+    const n = anio * 12 + mes;
+    return (j.ajustesCuota || []).filter((a) => { const i = a.desdeAnio * 12 + a.desdeMes; return n >= i && n < i + a.meses; }).pop() || null;
+  }
+  function cuotaMes(db, j, anio, mes) {
+    const a = ajusteCuota(j, anio, mes);
+    const base = cuotaDe(db, j);
+    if (!a) return base;
+    return a.tipo === 'suspension' ? 0 : Math.round(base * (1 - a.porcentaje / 100));
+  }
+  const finAjuste = (a) => { const n = a.desdeAnio * 12 + a.desdeMes + a.meses - 1; return { anio: Math.floor(n / 12), mes: n % 12 }; };
+
   function federativoPagado(db, rut, anio) {
     return !!(db.federativo[rut] && db.federativo[rut][anio] && db.federativo[rut][anio].pagado);
   }
@@ -137,7 +151,9 @@
   function mesesAdeudados(db, rut, anio, hoy) {
     const h = hoy ? new Date(hoy + 'T12:00:00') : new Date();
     const hasta = anio < h.getFullYear() ? 11 : anio > h.getFullYear() ? -1 : h.getMonth();
-    return db.config.mesesCobro.filter((m) => m <= hasta && !(pagoMes(db, rut, anio, m) || {}).pagado);
+    const j = db.usuarios.find((u) => u.rut === rut);
+    // Los meses con la cuota suspendida no se deben.
+    return db.config.mesesCobro.filter((m) => m <= hasta && !(pagoMes(db, rut, anio, m) || {}).pagado && !(j && cuotaMes(db, j, anio, m) === 0));
   }
 
   function entrenamientosDeCategoria(db, categoria) {
@@ -466,7 +482,7 @@
     const morosos = db.usuarios.filter((u) => u.rol === 'jugador' && u.activo !== false).map((j) => {
       const meses = mesesAdeudados(db, j.rut, anio, corte).filter((m) => m <= mes);
       const contacto = esMenor(j) ? apoderadosDe(db, j.rut)[0] : j;
-      return { nombre: j.nombre, categoria: etiquetaCategoria(j), meses, deuda: meses.length * cuotaDe(db, j), telefono: (contacto && contacto.telefono) || j.telefono || '' };
+      return { nombre: j.nombre, categoria: etiquetaCategoria(j), meses, deuda: meses.reduce((t, m) => t + cuotaMes(db, j, anio, m), 0), telefono: (contacto && contacto.telefono) || j.telefono || '' };
     }).filter((x) => x.meses.length).sort((a, b) => b.deuda - a.deuda || a.nombre.localeCompare(b.nombre));
     const suma = (l, f) => l.filter(f || (() => true)).reduce((s, x) => s + x.monto, 0);
     ingresos.sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -500,13 +516,14 @@
     const enviados = db.recordatoriosEnviados || {};
     return db.usuarios.filter((u) => u.rol === 'jugador' && u.activo !== false).filter((j) => {
       if ((pagoMes(db, j.rut, anio, mes) || {}).pagado) return false;
+      if (cuotaMes(db, j, anio, mes) === 0) return false;
       if ((db.pagosInformados || []).some((x) => x.rut === j.rut && x.estado === 'pendiente' && x.concepto === 'cuota' && x.mes === mes && x.anio === anio)) return false;
       return !enviados[[j.rut, anio, mes, tipo].join('|')];
     }).map((j) => {
       const menor = esMenor(j);
       const aps = apoderadosDe(db, j.rut);
       const destinatarios = (menor && aps.length ? aps : [j]).map((u) => ({ rut: u.rut, nombre: u.nombre, telefono: u.telefono || '', email: u.email || '' }));
-      const monto = cuotaDe(db, j);
+      const monto = cuotaMes(db, j, anio, mes);
       const fecha = venc.slice(8, 10) + '/' + venc.slice(5, 7);
       const de = menor ? 'la cuota de ' + j.nombre.split(/\s+/)[0] : 'tu cuota';
       const texto = tipo === 'antes'
@@ -771,6 +788,11 @@
     db.usuarios.push({ rut: 'apo:ejemplo2', rol: 'apoderado', nombre: 'Patricia Flores', hijos: [jugadores[7].rut], activo: true, creado: hoy });
     // Matías se recupera de un esguince: queda como lesionado.
     jugadores[5].lesionado = true;
+    // Por su lesión larga, la directiva le suspendió la cuota de este mes y el siguiente.
+    jugadores[5].ajustesCuota = [{ id: uid(), tipo: 'suspension', porcentaje: 100, desdeAnio: anio, desdeMes: new Date().getMonth(), meses: 2, motivo: 'Esguince de tobillo, sin entrenar', fecha: hoy, por: 'usr:vieux' }];
+    // Ex jugador dado de baja: queda en el historial con el motivo.
+    add(22333444, { nombre: 'Felipe Navarro', rol: 'jugador', fechaNac: '2002-11-02', categoria: 'Adultos B Masculino', numero: 15, posicion: 'Pivote', activo: false,
+      baja: { motivo: 'Transferido', detalle: 'Se fue al Club Balonmano Ovalle', fecha: sumarDias(hoy, -40), por: 'usr:vieux' } });
     const ficha = (j, m) => { j.medica = Object.assign({ sangre: '', alergias: '', condiciones: '', medicamentos: '', seguro: '', prevision: '', emergencia: '', obs: '' }, m); };
     ficha(jugadores[0], { sangre: 'O+', alergias: 'Penicilina', prevision: 'Fonasa', seguro: 'Seguro deportivo Federación', emergencia: 'María Rojas (madre) +56 9 1111 2222' });
     ficha(jugadores[6], { sangre: 'A+', condiciones: 'Asma leve', medicamentos: 'Salbutamol antes de entrenar', prevision: 'Isapre Colmena', seguro: 'Seguro escolar', emergencia: 'Pedro Meinas (padre) +56 9 6666 1234' });
@@ -1078,6 +1100,23 @@
   }
   const apoderadoSinRut = (u) => String(u && u.rut).startsWith('apo:');
 
+  // Eliminar una cuenta la deja inactiva con el motivo (se conserva su historial de pagos y asistencia).
+  const MOTIVOS_BAJA = ['Transferido', 'Renuncia', 'Otro'];
+  function darDeBaja(u, p, actor) {
+    if (p.activo) {
+      if (u.baja) u.bajasAnteriores = (u.bajasAnteriores || []).concat(Object.assign({}, u.baja, { reactivado: hoyISO() }));
+      delete u.baja;
+      u.activo = true;
+      return;
+    }
+    const motivo = MOTIVOS_BAJA.includes(p.motivo) ? p.motivo : null;
+    if (!motivo) throw err('Elige el motivo: transferido, renuncia u otro');
+    const detalle = texto(p.detalle, 200);
+    if (motivo === 'Otro' && !detalle) throw err('Cuenta brevemente el motivo');
+    u.activo = false;
+    u.baja = { motivo, detalle, fecha: hoyISO(), por: actor.rut };
+  }
+
   // Sólo se aceptan links web (evita "javascript:" y similares).
   function link(v) {
     const t = texto(v, 400);
@@ -1197,10 +1236,20 @@
         exigir(esStaff);
         const a = buscarUsuario(db, p.id);
         if (!a || a.rol !== 'apoderado') throw err('Apoderado no encontrado');
-        if (apoderadoSinRut(a)) {
-          db.usuarios = db.usuarios.filter((u) => u !== a);
-          (db.grupos || []).forEach((g) => { g.miembros = g.miembros.filter((r) => r !== a.rut); });
-        } else { a.hijos = []; a.activo = false; }
+        // Queda en el historial con el motivo y los jugadores que tenía a su cargo.
+        darDeBaja(a, Object.assign({}, p, { activo: false }), actor);
+        a.hijosAntes = a.hijos || [];
+        a.hijos = [];
+        (db.grupos || []).forEach((g) => { g.miembros = g.miembros.filter((r) => r !== a.rut); });
+        break;
+      }
+      case 'apoderado.reactivar': {
+        exigir(esStaff);
+        const a = buscarUsuario(db, p.id);
+        if (!a || a.rol !== 'apoderado') throw err('Apoderado no encontrado');
+        darDeBaja(a, { activo: true }, actor);
+        a.hijos = (a.hijosAntes || []).filter((r) => buscarUsuario(db, r));
+        delete a.hijosAntes;
         break;
       }
       case 'jugador.estado': {
@@ -1239,7 +1288,27 @@
       }
       case 'jugador.activo': {
         exigir(esDir);
-        buscarJugador(db, p.rut).activo = !!p.activo;
+        darDeBaja(buscarJugador(db, p.rut), p, actor);
+        break;
+      }
+      case 'cuota.ajuste': {
+        exigir(esDir);
+        const j = buscarJugador(db, p.rut);
+        const tipo = p.tipo === 'rebaja' ? 'rebaja' : 'suspension';
+        const meses = num(p.meses, 1, 24);
+        const desdeAnio = num(p.desdeAnio, 2000, 2100), desdeMes = num(p.desdeMes, 0, 11);
+        if (!meses || desdeAnio == null || desdeMes == null) throw err('Indica desde qué mes y por cuántos meses (1 a 24)');
+        const porcentaje = tipo === 'rebaja' ? num(p.porcentaje, 1, 99) : 100;
+        if (!porcentaje) throw err('Indica el porcentaje de rebaja (1 a 99)');
+        const motivo = texto(p.motivo, 200);
+        if (!motivo) throw err('Indica el motivo');
+        j.ajustesCuota = (j.ajustesCuota || []).concat({ id: uid(), tipo, porcentaje, desdeAnio, desdeMes, meses, motivo, fecha: hoyISO(), por: actor.rut });
+        break;
+      }
+      case 'cuota.quitarAjuste': {
+        exigir(esDir);
+        const j = buscarJugador(db, p.rut);
+        j.ajustesCuota = (j.ajustesCuota || []).filter((a) => a.id !== p.id);
         break;
       }
 
@@ -1273,8 +1342,8 @@
         exigir(esDir);
         const u = buscarUsuario(db, p.rut);
         if (!u || u.rol === 'jugador') throw err('Usuario no encontrado');
-        if (u.rut === actor.rut) throw err('No puedes desactivar tu propia cuenta');
-        u.activo = !!p.activo;
+        if (u.rut === actor.rut) throw err('No puedes eliminar tu propia cuenta');
+        darDeBaja(u, p, actor);
         break;
       }
       case 'clave.resetear': {
@@ -1537,7 +1606,7 @@
         db.pagos[j.rut][anio] = db.pagos[j.rut][anio] || {};
         if (p.pagado) {
           db.pagos[j.rut][anio][mes] = {
-            pagado: true, monto: p.monto != null && p.monto !== '' ? num(p.monto, 0) : cuotaDe(db, j),
+            pagado: true, monto: p.monto != null && p.monto !== '' ? num(p.monto, 0) : cuotaMes(db, j, anio, mes),
             fecha: fechaValida(p.fecha) ? p.fecha : hoyISO(), metodo: texto(p.metodo, 40) || 'Transferencia', registradoPor: actor.rut,
           };
         } else {
@@ -2210,6 +2279,6 @@
     hashClave, verificarClave, cambiarClave, prepararAccion,
     MESES_LARGOS, esMenor, apoderadosDe, siguienteCategoria, cambioTemporada,
     CAMPOS_ESTADISTICA, tablaGoleadores, estadisticasJugador, TESTS_FISICOS, cumpleanosDelMes,
-    reporteMensual, recordatoriosPendientes, marcarRecordatorio, crearXlsx, crc32, encuestaCerrada, reservasDe, categoriasNomina, puedeIrNomina, estadoJugador, apoderadoSinRut, MAX_FOTOS_ALBUM, pesos,
+    reporteMensual, recordatoriosPendientes, marcarRecordatorio, crearXlsx, crc32, encuestaCerrada, reservasDe, cuotaMes, ajusteCuota, finAjuste, MOTIVOS_BAJA, categoriasNomina, puedeIrNomina, estadoJugador, apoderadoSinRut, MAX_FOTOS_ALBUM, pesos,
   };
 });
