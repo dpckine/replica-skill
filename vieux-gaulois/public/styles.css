@@ -387,6 +387,7 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.4; }
 .aviso { padding: 14px 16px; border-radius: var(--radio); font-size: 15px; background: var(--alerta-cont); color: var(--alerta); margin-bottom: 16px; }
 .aviso.mal { background: var(--secundario-cont); color: var(--sobre-secundario-cont); }
 .aviso.info { background: var(--primario-cont); color: var(--sobre-primario-cont); }
+.aviso.ok { background: var(--exito-cont); color: var(--exito); }
 
 /* ---------- Elementos del club ---------- */
 .camiseta {

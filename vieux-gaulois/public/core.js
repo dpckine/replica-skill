@@ -58,8 +58,9 @@
   // Jugadores ingresan con su RUT. Directiva y entrenadores con un usuario y una clave
   // definidos por la directiva; internamente su identificador es "usr:<usuario>".
 
+  // Se aceptan mayúsculas, tildes y espacios: "J. Pérez" queda como "j.perez".
   function normalizarUsuario(u) {
-    const s = String(u || '').trim().toLowerCase();
+    const s = String(u || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '').toLowerCase();
     return /^[a-z][a-z0-9._-]{2,29}$/.test(s) ? s : null;
   }
 

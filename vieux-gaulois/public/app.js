@@ -834,6 +834,29 @@
       ct.length ? ['', '👥 Cuerpo técnico'].concat(ct) : []).join('\n');
   }
 
+  // ---------- Cuentas de directiva y entrenadores ----------
+  // Usuario sugerido: inicial del nombre + primer apellido ("Pedro Soto" -> "psoto"), sin repetir.
+  function usuarioSugerido(nombre) {
+    const partes = String(nombre || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+    if (!partes.length) return '';
+    let base = partes.length > 1 ? partes[0][0] + partes[1] : partes[0];
+    if (!/^[a-z]/.test(base)) base = 'u' + base;
+    base = (base + 'xx').slice(0, Math.max(3, Math.min(base.length, 24)));
+    const usados = new Set(S.view.usuarios.map((u) => u.usuario));
+    let u = base, n = 2;
+    while (usados.has(u)) u = base + n++;
+    return u;
+  }
+
+  function datosAcceso(o) {
+    const txt = 'Hola ' + o.nombre.split(/\s+/)[0] + ', ya tienes cuenta en la app de Vieux Gaulois Handball.\nUsuario: ' + o.usuario + '\nClave: ' + o.clave + '\nTe recomendamos cambiar la clave al entrar (Mi cuenta).';
+    return '<div class="aviso ok">' + h(o.nombre) + ' ya puede entrar como <b>' + (o.rol === 'directiva' ? 'directiva' : 'entrenador') + '</b>.</div>' +
+      '<div class="tarjeta"><ul class="lista"><li><div class="crece"><small>Usuario</small><b>' + h(o.usuario) + '</b></div></li><li><div class="crece"><small>Clave</small><b>' + h(o.clave) + '</b></div></li></ul></div>' +
+      '<p class="ayuda">Envíale estos datos. La clave no se vuelve a mostrar; si la olvida, la cambias con el botón "Clave".</p>' +
+      '<div class="modal-pie columna"><button class="btn primario ancho" data-act="copiarAcceso" data-txt="' + h(txt) + '">' + icono('copiar') + ' Copiar datos para enviar</button>' +
+      (o.telefono && telWa(o.telefono) ? '<a class="btn ancho" href="https://wa.me/' + telWa(o.telefono) + '?text=' + encodeURIComponent(txt) + '" target="_blank" rel="noopener noreferrer">' + icono('whatsapp') + ' Enviar por WhatsApp</a>' : '') + '</div>';
+  }
+
   // ---------- Reserva y cambios ----------
   // La reserva de cada partido son los jugadores de su categoría que no quedaron citados.
   // Quienes salieron por no poder ir siguen en la reserva, pero quedan al final.
@@ -1125,7 +1148,15 @@
   function vistaAjustes() {
     const cfg = S.view.config;
     const staff = S.view.usuarios.filter(esPersonal).sort((a, b) => a.rol.localeCompare(b.rol) || a.nombre.localeCompare(b.nombre));
-    return seccion('Precios de cuotas', '<form data-form="config" class="form-interno"><div class="campos">' + cfg.categoriasBase.map((b) => campo(b + ' (M y F)', '<input name="cuota_' + h(b) + '" type="number" min="0" step="500" inputmode="numeric" value="' + (cfg.cuotas[b] || 0) + '">')).join('') + '</div>' +
+    const bloqueStaff =      seccion('Directiva y entrenadores', '<ul class="lista">' + staff.map((u) => {
+        const j = u.jugadorRut && usuario(u.jugadorRut);
+        return '<li class="envolver"><div class="crece"><b>' + h(u.nombre) + '</b><small>Usuario: ' + h(u.usuario || u.rut) + ' · ' + h(u.cargo || u.rol) + (j ? ' · también juega en ' + h(j.categoria) : '') + '</small>' +
+          '<div class="fila insignias">' + insignia(u.rol === 'directiva' ? 'Directiva' : 'Entrenador', u.rol === 'directiva' ? 'oro' : '') + (u.activo === false ? insignia('Inactivo', 'mal') : '') +
+          (u.rut !== S.view.yo ? '<button class="btn mini" data-act="definirClave" data-rut="' + u.rut + '">Clave</button><button class="btn mini peligro" data-act="activoStaff" data-rut="' + u.rut + '" data-activo="' + (u.activo === false ? '1' : '') + '">' + (u.activo === false ? 'Activar' : 'Desactivar') + '</button>' : '') + '</div></div></li>';
+      }).join('') + '</ul>' +
+        '<button class="btn primario ancho" data-act="nuevoStaff" style="margin-top:12px">' + icono('mas2') + ' Agregar entrenador o directiva</button>', btnTexto('Agregar', 'nuevoStaff'), 'Cada uno entra con su usuario y clave.');
+    return bloqueStaff +
+      seccion('Precios de cuotas', '<form data-form="config" class="form-interno"><div class="campos">' + cfg.categoriasBase.map((b) => campo(b + ' (M y F)', '<input name="cuota_' + h(b) + '" type="number" min="0" step="500" inputmode="numeric" value="' + (cfg.cuotas[b] || 0) + '">')).join('') + '</div>' +
       '<div class="campos">' + campo('Monto federativo anual', input('montoFederativo', cfg.montoFederativo, 'type="number" min="0" step="500" inputmode="numeric"')) +
       campo('Día de vencimiento', input('diaVencimiento', cfg.diaVencimiento, 'type="number" min="1" max="28" inputmode="numeric"')) + '</div>' +
       '<p class="etiqueta">Meses que se cobran</p><div class="chequeos">' + C.MESES.map((m, i) => '<label class="chip"><input type="checkbox" name="mesesCobro[]" value="' + i + '"' + (cfg.mesesCobro.includes(i) ? ' checked' : '') + '><span>' + m + '</span></label>').join('') + '</div>' +
@@ -1139,12 +1170,6 @@
         '<button class="btn primario ancho">Guardar</button></form>') +
       seccion('Categorías', '<form data-form="categorias" class="form-interno"><textarea class="entrada" name="categoriasBase" rows="8">' + h(cfg.categoriasBase.join('\n')) + '</textarea>' +
         '<button class="btn primario ancho" style="margin-top:12px">Guardar categorías</button></form>', '', 'Una por línea. Cada una se crea en rama Masculina y Femenina. Infantil, Cadete y Juvenil piden 1er o 2do año.') +
-      seccion('Directiva y entrenadores', '<ul class="lista">' + staff.map((u) => {
-        const j = u.jugadorRut && usuario(u.jugadorRut);
-        return '<li class="envolver"><div class="crece"><b>' + h(u.nombre) + '</b><small>Usuario: ' + h(u.usuario || u.rut) + ' · ' + h(u.cargo || u.rol) + (j ? ' · también juega en ' + h(j.categoria) : '') + '</small>' +
-          '<div class="fila insignias">' + insignia(u.rol === 'directiva' ? 'Directiva' : 'Entrenador', u.rol === 'directiva' ? 'oro' : '') + (u.activo === false ? insignia('Inactivo', 'mal') : '') +
-          (u.rut !== S.view.yo ? '<button class="btn mini" data-act="definirClave" data-rut="' + u.rut + '">Clave</button><button class="btn mini peligro" data-act="activoStaff" data-rut="' + u.rut + '" data-activo="' + (u.activo === false ? '1' : '') + '">' + (u.activo === false ? 'Activar' : 'Desactivar') + '</button>' : '') + '</div></div></li>';
-      }).join('') + '</ul>', btnTexto('Agregar', 'nuevoStaff')) +
       (S.modo === 'local' ? seccion('Demo', '<button class="btn ancho peligro" data-act="reiniciarDemo">Reiniciar datos de ejemplo</button>', '', 'Borra los cambios hechos en este navegador.') : '');
   }
 
@@ -2475,15 +2500,23 @@
     },
 
     // Staff
-    nuevoStaff: () => abrirModal('Agregar directiva o entrenador', '<form id="form-modal">' +
-      campo('Nombre', input('nombre', '', 'required')) +
-      '<div class="campos">' + campo('Usuario', input('usuario', '', 'required autocapitalize="none" autocomplete="off" placeholder="Ej: jperez" pattern="[A-Za-z][A-Za-z0-9._\\-]{2,29}" title="3 a 30 caracteres, empieza con letra, sin espacios"')) +
-      campo('Clave', input('clave', '', 'required minlength="4" autocomplete="new-password"')) +
-      campo('Rol', '<select name="rol"><option value="entrenador">Entrenador</option><option value="directiva">Directiva</option></select>') +
-      campo('Cargo', input('cargo', '', 'placeholder="Ej: Tesorero, Entrenador Juvenil"')) + campo('Teléfono', input('telefono', '', 'type="tel"')) + campo('Email', input('email', '', 'type="email"')) + '</div>' +
+    nuevoStaff: () => abrirModal('Agregar entrenador o directiva', '<form id="form-modal">' +
+      campo('Nombre', input('nombre', '', 'required data-usuario-desde')) +
+      '<div class="campos">' + campo('Rol', '<select name="rol"><option value="entrenador">Entrenador</option><option value="directiva">Directiva</option></select>') +
+      campo('Usuario para entrar', input('usuario', '', 'autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="Se crea con el nombre"')) +
+      campo('Clave', input('clave', '', 'required minlength="4" autocomplete="new-password" placeholder="Mínimo 4 caracteres"')) +
+      campo('Cargo', input('cargo', '', 'placeholder="Ej: Entrenador Juvenil"')) + campo('Teléfono', input('telefono', '', 'type="tel"')) + campo('Email', input('email', '', 'type="email"')) + '</div>' +
       campo('¿También es jugador del club?', '<select name="jugadorRut"><option value="">No</option>' + jugadores().map((j) => '<option value="' + j.rut + '">' + h(j.nombre) + ' (' + h(j.categoria) + ')</option>').join('') + '</select>') +
-      '<p class="ayuda">Entra con este usuario y clave. Si también es jugador, su perfil de jugador sigue entrando con su RUT.</p>' + pie('Agregar') + '</form>',
-    (o) => accion('staff.crear', o, 'Usuario "' + o.usuario.trim().toLowerCase() + '" creado')),
+      '<p class="ayuda">El usuario se arma solo con el nombre (puedes cambiarlo). Si también es jugador, su perfil de jugador sigue entrando con su RUT.</p>' + pie('Agregar') + '</form>',
+    async (o) => {
+      o.usuario = C.normalizarUsuario(o.usuario || usuarioSugerido(o.nombre));
+      if (!o.usuario) throw new Error('Usuario no válido: usa al menos 3 letras o números, empezando con una letra');
+      if (S.view.usuarios.some((u) => u.usuario === o.usuario)) throw new Error('Ya existe el usuario "' + o.usuario + '". Elige otro.');
+      const ok = await accion('staff.crear', o, (o.rol === 'directiva' ? 'Directiva' : 'Entrenador') + ' agregado');
+      if (ok) abrirModal('Cuenta creada', datosAcceso(o));
+      return false;
+    }),
+    copiarAcceso: (d) => copiar(d.txt).then(() => toast('Copiado', 'ok')),
     definirClave: (d) => {
       const u = usuario(d.rut);
       abrirModal('Nueva clave para ' + u.nombre, '<form id="form-modal"><p class="ayuda">Usuario: <b>' + h(u.usuario) + '</b></p>' +
@@ -2568,6 +2601,10 @@
 
   document.addEventListener('input', (ev) => {
     if (ev.target.id === 'chat-texto') S.borrador[S.hilo] = ev.target.value;
+    if (ev.target.hasAttribute && ev.target.hasAttribute('data-usuario-desde')) {
+      const u = ev.target.form && ev.target.form.querySelector('input[name=usuario]');
+      if (u) u.placeholder = usuarioSugerido(ev.target.value) || 'Se crea con el nombre';
+    }
     if (ev.target.dataset && ev.target.dataset.cambio === 'busqueda') { S.busqueda = ev.target.value; render(); }
     if (ev.target.id === 'login-rut' || ((ev.target.name === 'rut' || ev.target.name === 'apoderadoRut') && ev.target.form && ev.target.form.getAttribute('id') === 'form-modal' && ev.target.type !== 'hidden')) {
       // En el login también se escriben usuarios: sólo se da formato si parte con un número.

@@ -627,3 +627,15 @@ test('reserva por partido: quien no puede se cambia por un no convocado', () => 
   C.applyAction(db, LUCAS, { type: 'citacion.responder', payload: { id: m.id, respuesta: 'confirmado' } });
   assert.strictEqual(m.citados[LUCAS], 'confirmado');
 });
+
+test('usuario de staff: acepta mayúsculas, tildes y espacios', async () => {
+  assert.strictEqual(C.normalizarUsuario(' J. Pérez '), 'j.perez');
+  assert.strictEqual(C.normalizarUsuario('Pedro Soto'), 'pedrosoto');
+  assert.strictEqual(C.normalizarUsuario('12abc'), null);
+  const db = C.dbEjemplo();
+  C.applyAction(db, DIR, await C.prepararAccion({ type: 'staff.crear', payload: { usuario: 'P Soto', clave: 'pedro1234', nombre: 'Pedro Soto', rol: 'entrenador' } }, sha256));
+  const u = db.usuarios.find((x) => x.rut === 'usr:psoto');
+  assert.ok(u);
+  assert.strictEqual(C.idDeIngreso('PSoto'), 'usr:psoto');
+  assert.ok(await C.verificarClave(u, 'pedro1234', sha256));
+});
