@@ -55,8 +55,10 @@ Al citar a un jugador no habilitado, la app avisa al entrenador.
 - **Compromiso de becados:** la directiva envía (en Documentos) un compromiso extra a los
   jugadores becados, que lo firman al ingresar. En Documentos se ve quién firmó y cuándo.
 
-Diseño estilo iOS: barra de pestañas abajo, títulos grandes, listas agrupadas, hojas que suben
-desde abajo y modo oscuro automático según el teléfono.
+Diseño Material Design 3 con los colores del escudo (azul, rojo y oro): barra de navegación
+abajo en el teléfono y riel lateral en el computador, botón flotante para crear, hojas que suben
+desde abajo. Tema día / noche: sigue al teléfono o se cambia con el botón de la barra superior
+(en "Mi cuenta" también se puede volver a Automático).
 
 ## Cómo correrla
 

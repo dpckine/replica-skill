@@ -163,7 +163,23 @@
   const avisosVistos = () => { try { return JSON.parse(leerLS('vg_av_' + S.view.yo) || '[]'); } catch (e) { return []; } };
   const avisosNuevos = () => { const v = avisosVistos(); return avisos().filter((a) => !v.includes(a.id) && a.autor !== S.view.yo).length; };
 
-  // ---------- Íconos (trazo fino, estilo iOS) ----------
+  // ---------- Tema día / noche ----------
+  // auto sigue al sistema; claro y oscuro se fijan a mano y se recuerdan en este navegador.
+  const TEMAS = { auto: 'Automático', claro: 'Día', oscuro: 'Noche' };
+  const temaActual = () => (TEMAS[leerLS('vg_tema')] ? leerLS('vg_tema') : 'auto');
+  const oscuroSistema = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  function aplicarTema() {
+    const t = temaActual();
+    if (t === 'auto') delete document.documentElement.dataset.tema; else document.documentElement.dataset.tema = t;
+    const noche = t === 'oscuro' || (t === 'auto' && oscuroSistema && oscuroSistema.matches);
+    const meta = $('meta[name="theme-color"]');
+    if (meta) meta.content = noche ? '#0B1230' : '#14307A';
+  }
+  aplicarTema();
+  if (oscuroSistema && oscuroSistema.addEventListener) oscuroSistema.addEventListener('change', aplicarTema);
+  const botonTema = () => { const t = temaActual(); return '<button class="btn-tema" data-act="tema" aria-label="Tema: ' + TEMAS[t] + '" title="Tema: ' + TEMAS[t] + '">' + icono(t) + '</button>'; };
+
+  // ---------- Íconos (trazo de 24px, estilo Material) ----------
   const ICONOS = {
     inicio: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
     avisos: '<path d="M3 10v4a1 1 0 0 0 1 1h3l7 4.5V4.5L7 9H4a1 1 0 0 0-1 1z"/><path d="M17.5 8.5a5 5 0 0 1 0 7"/>',
@@ -179,6 +195,9 @@
     perfil: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
     mas: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
     mas2: '<path d="M12 5v14M5 12h14"/>',
+    claro: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    oscuro: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+    auto: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
     flecha: '<path d="M9 5l7 7-7 7"/>',
     salir: '<path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 8l-4 4 4 4M6 12h10"/>',
     llave: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/>',
@@ -276,9 +295,9 @@
       [['Directiva', 'vieux', 'vieuxg1234'], ['Entrenador', 'jorge', 'jorge1234'], ['Jugador (firma al entrar)', '20.123.456-5', '2012'], ['Jugadora becada', '20.555.666-4', '2055'], ['Entrenador y jugador', 'tomas', 'tomas1234']]
         .map(([r, u, c]) => '<button type="button" data-act="rellenarDemo" data-usuario="' + u + '" data-clave="' + c + '"><span>' + r + '</span><b>' + u + '</b><small>' + c + '</small></button>').join('') +
       '</div>' : '';
-    return '<div class="login"><div class="login-caja">' +
-      '<img src="' + ESCUDO + '" alt="Escudo Vieux Gaulois">' +
-      '<h1>Vieux Gaulois</h1><div class="lema">HANDBALL</div>' +
+    return '<div class="login"><div class="login-fondo" aria-hidden="true"></div>' + botonTema() + '<div class="login-caja">' +
+      '<div class="login-marca"><img src="' + ESCUDO + '" alt="Escudo Vieux Gaulois">' +
+      '<h1>Vieux Gaulois</h1><div class="lema">HANDBALL CLUB</div><div class="franja" aria-hidden="true"><i></i><i></i><i></i></div></div>' +
       '<form id="form-login" autocomplete="on"><div class="tarjeta grupo-form">' +
       '<input name="rut" id="login-rut" aria-label="RUT o usuario" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="RUT o usuario" required>' +
       '<input name="clave" type="password" aria-label="Clave" autocomplete="current-password" placeholder="Clave" required></div>' +
@@ -294,7 +313,7 @@
     const menor = j.fechaNac && C.edad(j.fechaNac) < 18;
     const parrafos = doc.texto.split(/\n\s*\n/).map((p) => '<p>' + h(p).replace(/\n/g, '<br>') + '</p>').join('');
     return '<div class="firma"><div class="firma-caja">' +
-      '<img src="' + ESCUDO + '" alt="" class="firma-escudo">' +
+      '<img src="' + ESCUDO + '" alt="" class="firma-escudo"><div class="franja corta" aria-hidden="true"><i></i><i></i><i></i></div>' +
       '<p class="firma-sub">' + (doc.id === 'consentimiento' ? 'Antes de comenzar' : 'La directiva te envió un documento') + '</p>' +
       '<h1>' + h(doc.titulo) + '</h1>' +
       '<div class="tarjeta firma-texto">' + parrafos + '</div>' +
@@ -338,16 +357,18 @@
     const activa = t.mas.includes(S.tab) ? 'mas' : S.tab;
     const barra = t.barra.concat(t.mas.length ? ['mas'] : []).map((id) => {
       const n = contador(id);
-      return '<button data-act="tab" data-tab="' + id + '" class="' + (activa === id ? 'activa' : '') + '">' + icono(id) +
-        '<span>' + NOMBRES[id] + '</span>' + (n ? '<i class="punto">' + n + '</i>' : '') + '</button>';
+      return '<button data-act="tab" data-tab="' + id + '" class="' + (activa === id ? 'activa' : '') + '"' + (activa === id ? ' aria-current="page"' : '') + '>' +
+        '<span class="ind">' + icono(id) + (n ? '<i class="punto">' + n + '</i>' : '') + '</span><span class="etq">' + NOMBRES[id] + '</span></button>';
     }).join('');
     const iniciales = u.nombre.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
     const botonTitulo = BOTON_TITULO[S.tab] ? BOTON_TITULO[S.tab]() : '';
     return '<header class="navbar"><img src="' + ESCUDO + '" alt=""><div class="navbar-tit"><b>Vieux Gaulois</b><small>' + h(u.cargo || u.rol) + '</small></div>' +
-      '<button class="avatar" data-act="cuenta" aria-label="Mi cuenta">' + h(iniciales) + '</button></header>' +
+      botonTema() + '<button class="avatar" data-act="cuenta" aria-label="Mi cuenta">' + h(iniciales) + '</button></header>' +
+      '<div class="franja" aria-hidden="true"><i></i><i></i><i></i></div>' +
       (S.modo === 'local' ? '<div class="modo-demo">Modo demo · los datos se guardan sólo en este navegador</div>' : '') +
-      '<main><div class="titulo-fila"><h1 class="titulo-grande">' + h(NOMBRES[S.tab]) + '</h1>' + (botonTitulo || '') + '</div>' + contenido + '</main>' +
-      '<nav class="tabbar">' + barra + '</nav>';
+      '<main><div class="titulo-fila"><h1 class="titulo-grande">' + h(NOMBRES[S.tab]) + '</h1></div>' + contenido + '</main>' +
+      (botonTitulo ? '<div class="fab-zona">' + botonTitulo + '</div>' : '') +
+      '<nav class="tabbar" aria-label="Secciones">' + barra + '</nav>';
   }
 
   function vistaMas() {
@@ -361,6 +382,7 @@
 
   function seccionCuenta() {
     return seccion('Cuenta', '<ul class="lista clic">' +
+      '<li data-act="tema" data-ciclo="1"><span class="ico-celda c-tema">' + icono(temaActual()) + '</span><div class="crece"><b>Tema</b></div><span class="valor">' + TEMAS[temaActual()] + '</span></li>' +
       '<li data-act="clave"><span class="ico-celda c-gris">' + icono('llave') + '</span><div class="crece"><b>Cambiar clave</b></div><span class="chevron">' + icono('flecha') + '</span></li>' +
       '<li data-act="salir"><span class="ico-celda c-rojo">' + icono('salir') + '</span><div class="crece"><b class="rojo">Cerrar sesión</b></div></li></ul>');
   }
@@ -423,7 +445,10 @@
     }
     const semana = proximos(S.view.entrenamientos).filter((e) => e.fecha <= C.sumarDias(HOY, 7));
     const ult = avisos().slice(0, 2);
-    return '<div class="kpis">' + kpis + '</div>' +
+    const hero = '<section class="perfil bienvenida"><div class="perfil-fila"><img class="hero-escudo" src="' + ESCUDO + '" alt=""><div class="crece">' +
+      '<small class="hero-sub">Temporada ' + ANIO + '</small><h2>Hola, ' + h(yo().nombre.split(/\s+/)[0]) + '</h2>' +
+      '<p>' + (prox ? 'Próximo partido: ' + h(prox.categoria) + ' vs ' + h(prox.rival) + ' · ' + h(fCorta(prox.fecha)) + ' ' + h(prox.hora) + ' hrs' : 'No hay partidos programados') + '</p></div></div></section>';
+    return hero + '<div class="kpis">' + kpis + '</div>' +
       seccion('Lesiones y dolores sin revisar', nuevas.length ? '<ul class="lista">' + nuevas.map(itemLesion).join('') + '</ul>' : vacio('No hay reportes nuevos.'),
         nuevas.length ? btnTexto('Marcar revisado', 'lesionVistoTodo') : '') +
       seccion('Próximo partido', prox ? tarjetaPartido(prox) : vacio('No hay partidos programados.'), btnTexto('Ver todos', 'tab', 'data-tab="partidos"')) +
@@ -960,6 +985,19 @@
       render();
     },
     cerrarModal,
+    // El botón de la barra alterna día/noche; en "Mi cuenta" se recorre también "Automático".
+    tema: (d) => {
+      const t = temaActual();
+      const noche = t === 'oscuro' || (t === 'auto' && oscuroSistema && oscuroSistema.matches);
+      const orden = Object.keys(TEMAS);
+      const sig = d.ciclo ? orden[(orden.indexOf(t) + 1) % orden.length] : noche ? 'claro' : 'oscuro';
+      guardarLS('vg_tema', sig === 'auto' ? null : sig);
+      aplicarTema();
+      const enHoja = !$('#modal').hidden;
+      if (enHoja) cerrarModal();
+      render();
+      toast('Tema: ' + TEMAS[sig]);
+    },
     cuenta: () => {
       const u = yo();
       abrirModal('Mi cuenta', '<div class="ficha-cab"><div class="avatar grande">' + h(u.nombre.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase()) + '</div><div class="crece"><b>' + h(u.nombre) + '</b><small>' + h(u.cargo || u.rol) + '</small><small>' + h(u.usuario ? 'Usuario: ' + u.usuario : C.formatearRut(u.rut)) + '</small></div></div>' + seccionCuenta());
