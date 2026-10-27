@@ -220,6 +220,7 @@
 
   // ---------- Íconos (trazo de 24px, estilo Material) ----------
   const ICONOS = {
+    cambiar: '<path d="M7 4L3 8l4 4M3 8h14M17 12l4 4-4 4M21 16H7"/>',
     inicio: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
     avisos: '<path d="M3 10v4a1 1 0 0 0 1 1h3l7 4.5V4.5L7 9H4a1 1 0 0 0-1 1z"/><path d="M17.5 8.5a5 5 0 0 1 0 7"/>',
     jugadores: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16.5 14.3a5 5 0 0 1 5 5.7"/>',
@@ -833,6 +834,54 @@
       ct.length ? ['', '👥 Cuerpo técnico'].concat(ct) : []).join('\n');
   }
 
+  // ---------- Reserva y cambios ----------
+  // La reserva de cada partido son los jugadores de su categoría que no quedaron citados.
+  // Quienes salieron por no poder ir siguen en la reserva, pero quedan al final.
+  const salio = (m, rut) => (m.reemplazos || []).some((x) => x.sale === rut);
+  const reservas = (m) => jugadores().filter((j) => j.categoria === m.categoria && !(m.citados || {})[j.rut]).sort((a, b) => salio(m, a.rut) - salio(m, b.rut));
+  const rechazados = (m) => Object.keys(m.citados || {}).filter((r) => m.citados[r] === 'rechazado');
+  const puedeCambiar = (m) => esStaff() && m.fecha >= HOY && !m.resultado;
+  const notaJugador = (j, m) => [m && salio(m, j.rut) ? 'avisó que no puede' : '', !hab(j.rut) ? 'no habilitado' : '', lesionesActivas(j.rut).length ? 'lesión' : ''].filter(Boolean).join(' · ');
+
+  function bloqueReserva(m) {
+    if (!esStaff() || !puedeCambiar(m) || !Object.keys(m.citados || {}).length) return '';
+    const rs = reservas(m);
+    return '<div class="reserva"><p class="sub">En reserva · ' + rs.length + '</p>' +
+      (rs.length ? '<div class="fila insignias">' + rs.map((j) => '<span class="chip-jugador' + (notaJugador(j, m) ? ' aviso-chip' : '') + '" title="' + h(notaJugador(j, m) || 'Disponible') + '">' + (j.numero != null ? '<b>' + h(j.numero) + '</b>' : '') + h(j.nombre) + (salio(m, j.rut) ? ' <small>no puede</small>' : '') + '</span>').join('') + '</div>'
+        : '<p class="ayuda">Todos los jugadores de ' + h(m.categoria) + ' están citados.</p>') + '</div>';
+  }
+
+  function formReemplazo(m, sale) {
+    const salen = sale ? [sale] : rechazados(m);
+    const rs = reservas(m);
+    const opciones = '<option value="">Elegir de la reserva</option>' + rs.map((j) => '<option value="' + j.rut + '">' + (j.numero != null ? '#' + h(j.numero) + ' ' : '') + h(j.nombre) + (j.posicion ? ' · ' + h(j.posicion) : '') + (notaJugador(j, m) ? ' (' + notaJugador(j, m) + ')' : '') + '</option>').join('');
+    const filas = salen.map((r) => {
+      const u = usuario(r) || { nombre: '?' };
+      return '<li class="cambio"><div class="cambio-sale"><span class="etq">Sale</span><b>' + (u.numero != null ? '#' + h(u.numero) + ' ' : '') + h(u.nombre) + '</b>' + insignia('No puede', 'mal') + '</div>' +
+        '<span class="cambio-flecha" aria-hidden="true">' + icono('cambiar') + '</span>' +
+        '<label class="cambio-entra"><span class="etq">Entra</span><select name="e_' + r + '">' + opciones + '</select></label></li>';
+    }).join('');
+    return '<p class="ayuda">vs ' + h(m.rival) + ' · ' + h(fLarga(m.fecha)) + ' · ' + h(m.categoria) + '</p>' +
+      (rs.length ? '<form id="form-modal"><ul class="lista cambios">' + filas + '</ul>' +
+        '<p class="ayuda">Quien entra queda citado y recibe el aviso para confirmar. Quien sale vuelve a la reserva.</p>' + pie('Hacer el cambio') + '</form>'
+        : vacio('No hay jugadores en reserva en ' + m.categoria + '. Puedes citar de otra categoría con "Editar citados".') +
+          '<div class="modal-pie"><button class="btn ancho" data-act="citar" data-id="' + m.id + '">Editar citados</button></div>');
+  }
+
+  function abrirReemplazo(id, sale) {
+    const m = partido(id);
+    abrirModal(sale ? 'Cambiar jugador' : 'Cambiar a quienes no pueden', formReemplazo(m, sale), async (o) => {
+      const cambios = Object.keys(o).filter((k) => k.startsWith('e_') && o[k]).map((k) => ({ sale: k.slice(2), entra: o[k] }));
+      if (!cambios.length) throw new Error('Elige quién entra');
+      if (new Set(cambios.map((c) => c.entra)).size < cambios.length) throw new Error('Elegiste al mismo jugador dos veces');
+      const noHab = cambios.filter((c) => !hab(c.entra));
+      if (noHab.length && !confirm(noHab.map((c) => usuario(c.entra).nombre).join(', ') + (noHab.length > 1 ? ' no están habilitados' : ' no está habilitado') + ' (federativo pendiente). ¿Citar igual?')) return false;
+      const ok = await accion('citacion.reemplazar', { id: m.id, cambios }, cambios.length > 1 ? cambios.length + ' cambios hechos' : 'Cambio hecho: ' + usuario(cambios[0].entra).nombre + ' entra a la convocatoria');
+      if (ok) abrirModal('Convocatoria', vistaConvocatoria(partido(m.id)));
+      return false;
+    });
+  }
+
   function vistaConvocatoria(m) {
     const lista = nombresConvocados(m);
     const estados = { confirmado: insignia('Confirmó', 'ok'), rechazado: insignia('No puede', 'mal'), pendiente: insignia('Sin responder') };
@@ -840,11 +889,13 @@
     return '<div class="convocatoria">' +
       '<div class="conv-cab"><img src="' + ESCUDO + '" alt=""><div><b>' + h(tituloConvocatoria(m)) + '</b><small>Vieux Gaulois Handball</small></div></div>' +
       '<ul class="conv-lineas">' + lineasConvocatoria(m).map(([e, t]) => '<li><span>' + e + '</span>' + h(t) + '</li>').join('') + '</ul>' +
-      (lista.length ? '<ol class="conv-lista">' + lista.map((c) => '<li><span>' + h(c.nombre) + '</span>' + (c.estado ? estados[c.estado] : '') + (c.rut && !hab(c.rut) ? insignia('No habilitado', 'mal') : '') + '</li>').join('') + '</ol>' : vacio('Todavía no hay jugadores citados.')) +
+      (lista.length ? '<ol class="conv-lista">' + lista.map((c) => '<li><span>' + h(c.nombre) + '</span>' + (c.estado ? estados[c.estado] : '') + (c.rut && !hab(c.rut) ? insignia('No habilitado', 'mal') : '') +
+        (c.estado === 'rechazado' && puedeCambiar(m) ? '<button class="btn-chip" data-act="reemplazar" data-id="' + m.id + '" data-sale="' + c.rut + '">' + icono('cambiar') + 'Cambiar</button>' : '') + '</li>').join('') + '</ol>' : vacio('Todavía no hay jugadores citados.')) +
       (lineasCuerpoTecnico(m).length ? '<div class="conv-ct"><b>👥 Cuerpo técnico</b>' + lineasCuerpoTecnico(m).map((t) => '<span>' + h(t) + '</span>').join('') + '</div>' : '') +
-      '</div>' +
+      '</div>' + bloqueReserva(m) +
       (m.citacionFecha ? '<p class="seccion-pie">Guardada el ' + h(fCorta(m.citacionFecha)) + (autor ? ' por ' + h(autor.nombre) : '') + '.</p>' : '') +
       '<div class="modal-pie columna">' +
+      (esStaff() && puedeCambiar(m) && rechazados(m).length ? '<button class="btn primario ancho" data-act="reemplazar" data-id="' + m.id + '">' + icono('cambiar') + ' Cambiar a ' + (rechazados(m).length > 1 ? 'los ' + rechazados(m).length + ' que no pueden' : 'quien no puede') + '</button>' : '') +
       (m.miCitacion ? '<div class="fila" style="gap:8px"><button class="btn primario crece" data-act="responder" data-id="' + m.id + '" data-r="confirmado">Voy ✓</button><button class="btn crece" data-act="responder" data-id="' + m.id + '" data-r="rechazado">No puedo</button></div>' : '') +
       '<button class="btn ancho" data-act="pdfConvocatoria" data-id="' + m.id + '">' + icono('pdf') + ' Descargar PDF</button>' +
       '<button class="btn ancho" data-act="copiarConvocatoria" data-id="' + m.id + '">' + icono('copiar') + ' Copiar texto para WhatsApp</button>' +
@@ -871,13 +922,16 @@
       '<b>vs ' + h(m.rival) + '</b><small>' + h(fLarga(m.fecha)) + ' · ' + h(m.hora) + ' hrs' + (m.presentacion ? ' · citación ' + h(m.presentacion) : '') + '</small>' +
       '<small>' + h(m.condicion) + ' · ' + h(m.lugar || '') + (m.vestimenta ? ' · 🧦 ' + h(m.vestimenta) : '') + '</small>' +
       '<div class="fila insignias">' + insignia(m.categoria, 'oro') +
-      (jug ? (m.miCitacion ? insignia('Estás citado', 'ok') + (m.miCitacion === 'confirmado' ? insignia('Confirmaste', 'ok') : m.miCitacion === 'rechazado' ? insignia('No puedes', 'mal') : insignia('Responde', 'alerta')) : '')
-        : insignia(r.total + ' citados') + (r.ok ? insignia(r.ok + ' confirmados', 'ok') : '') + (r.no ? insignia(r.no + ' no pueden', 'mal') : '')) + res + '</div>' +
+      (jug ? (m.miCitacion ? insignia('Estás citado', 'ok') + (m.miCitacion === 'confirmado' ? insignia('Confirmaste', 'ok') : m.miCitacion === 'rechazado' ? insignia('No puedes', 'mal') : insignia('Responde', 'alerta'))
+        : m.fecha >= HOY && m.reemplazado ? insignia('Cambiado') : m.fecha >= HOY && m.enReserva ? insignia('En reserva', 'oro') : '')
+        : insignia(r.total + ' citados') + (r.ok ? insignia(r.ok + ' confirmados', 'ok') : '') + (r.no ? insignia(r.no + ' no pueden', 'mal') : '') + (r.total && puedeCambiar(m) && reservas(m).length ? insignia(reservas(m).length + ' en reserva') : '')) + res + '</div>' +
       '<div class="fila insignias">' +
       (jug && m.miCitacion && m.fecha >= HOY ? '<button class="btn mini primario" data-act="responder" data-id="' + m.id + '" data-r="confirmado">Voy</button><button class="btn mini" data-act="responder" data-id="' + m.id + '" data-r="rechazado">No puedo</button>' : '') +
       ((jug ? m.citadosLista.length : r.total) ? '<button class="btn mini' + (jug ? '' : ' primario') + '" data-act="convocatoria" data-id="' + m.id + '">Convocatoria</button>' : '') +
+      (!jug && r.no && puedeCambiar(m) ? '<button class="btn mini primario" data-act="reemplazar" data-id="' + m.id + '">' + icono('cambiar') + ' Cambiar ' + r.no + '</button>' : '') +
       (!jug ? '<button class="btn mini" data-act="citar" data-id="' + m.id + '">Citar</button>' + (m.fecha <= HOY ? '<button class="btn mini" data-act="resultado" data-id="' + m.id + '">Resultado y estadísticas</button>' : '') +
         '<button class="btn mini" data-act="editarPartido" data-id="' + m.id + '">Editar</button>' : '') + '</div>' +
+      (jug && !m.miCitacion && m.fecha >= HOY && (m.enReserva || m.reemplazado) ? '<p class="nota">' + (m.reemplazado ? 'Avisaste que no puedes y el entrenador citó a otro jugador. Quedas en la reserva.' : 'Quedaste en la reserva de este partido. Si alguien no puede ir, el entrenador te puede llamar y te llegará el aviso.') + '</p>' : '') +
       (jug && m.miEstadistica ? '<p class="nota">Tus números: ' + m.miEstadistica.g + ' goles' + (m.miEstadistica.at ? ', ' + m.miEstadistica.at + ' atajadas' : '') + (m.miEstadistica.dm ? ', ' + m.miEstadistica.dm + ' × 2 min' : '') + '</p>' : '') +
       (m.comentario ? '<p class="nota">💬 ' + h(m.comentario) + '</p>' : '') +
       (m.notas ? '<p class="nota">' + h(m.notas) + '</p>' : '') + '</div></div>';
@@ -2302,6 +2356,7 @@
     borrarPartido: (d) => { if (confirm('¿Eliminar este partido?')) enviarConError(accion('partido.eliminar', { id: d.id }, 'Eliminado')); },
     citar: (d) => abrirCitacion(d.id, false),
     citarTodas: (d) => abrirCitacion(d.id, true),
+    reemplazar: (d) => abrirReemplazo(d.id, d.sale),
     convocatoria: (d) => abrirModal('Convocatoria', vistaConvocatoria(partido(d.id))),
     pdfConvocatoria: (d) => imprimirConvocatoria(partido(d.id)),
     copiarConvocatoria: (d) => copiar(textoConvocatoria(partido(d.id))),

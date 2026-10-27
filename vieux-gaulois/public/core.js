@@ -576,6 +576,11 @@
     (db.notificar = db.notificar || []).push({ para: ruts, titulo: String(titulo).slice(0, 80), cuerpo: String(cuerpo || '').slice(0, 180), tab: tab || '' });
   }
 
+  // Reserva de un partido: jugadores activos de su categoría que no quedaron citados.
+  // Se calcula por partido, así que cambia con cada convocatoria.
+  const reservasDe = (db, m) => jugadoresDeCategoria(db, m.categoria).filter((r) => !(m.citados || {})[r]);
+  const nombreJugador = (db, rut) => (db.usuarios.find((u) => u.rut === rut) || { nombre: 'Ese jugador' }).nombre;
+
   const jugadoresDeCategoria = (db, categoria) => db.usuarios.filter((u) => u.rol === 'jugador' && u.activo !== false && (!categoria || u.categoria === categoria)).map((u) => u.rut);
 
   // ---------- Convocatoria: cuerpo técnico ----------
@@ -726,6 +731,9 @@
       add(24890123, { nombre: 'Benjamín Aguayo', rol: 'jugador', fechaNac: '2011-' + mesHoy + '-' + diaCumple, categoria: CAD, anioCategoria: '1', numero: 11, posicion: 'Extremo derecho' }),
       add(24901234, { nombre: 'Sofía Herrera', rol: 'jugador', fechaNac: '2012-05-30', categoria: 'Infantil Femenino', anioCategoria: '1', numero: 6, posicion: 'Lateral derecho' }),
       add(25123987, { nombre: 'Martín Herrera', rol: 'jugador', fechaNac: '2016-08-20', categoria: 'Mini Masculino', numero: 3, posicion: 'Extremo izquierdo' }),
+      // Cadetes que no quedan convocados: son la reserva del próximo partido.
+      add(24991122, { nombre: 'Lucas Vidal', rol: 'jugador', fechaNac: '2011-09-14', categoria: CAD, anioCategoria: '1', numero: 13, posicion: 'Lateral izquierdo' }),
+      add(24993344, { nombre: 'Ignacio Paredes', rol: 'jugador', fechaNac: '2010-11-30', categoria: CAD, anioCategoria: '2', numero: 17, posicion: 'Extremo izquierdo' }),
     ];
     // Apoderada de Sofía y Martín: los menores quedan habilitados cuando ella firma el consentimiento.
     add(15678901, { nombre: 'Carolina Herrera', rol: 'apoderado', telefono: '+56 9 4444 5555', email: 'carolina.herrera@example.com', hijos: [jugadores[10].rut, jugadores[11].rut] });
@@ -788,7 +796,7 @@
       id: uid(), fecha: sumarDias(hoy, 5), hora: '15:00', rival: 'UdeC', lugar: 'Parque Rivera Bio Bio',
       condicion: 'Visita', competicion: 'Liga Regional', categoria: CAD, vestimenta: 'Negras',
       indicaciones: db.config.indicacionesCitacion, presentacion: '14:00', resultado: null,
-      citados: ruts([[jugadores[6], 'confirmado'], [jugadores[7], 'pendiente'], [jugadores[8], 'confirmado'], [jugadores[9], 'pendiente']]),
+      citados: ruts([[jugadores[6], 'confirmado'], [jugadores[7], 'pendiente'], [jugadores[8], 'confirmado'], [jugadores[9], 'rechazado']]),
       citacionFecha: hoy, citadoPor: 'usr:jorge',
     });
     db.partidos.push({
@@ -1340,7 +1348,41 @@
         const j = jug();
         const m = db.partidos.find((x) => x.id === p.id);
         if (!m || !m.citados[j.rut]) throw err('No estás citado a este partido');
+        const antes = m.citados[j.rut];
         m.citados[j.rut] = p.respuesta === 'confirmado' ? 'confirmado' : 'rechazado';
+        // Si alguien se baja, el entrenador recibe el aviso para llamar a uno de la reserva.
+        if (m.citados[j.rut] === 'rechazado' && antes !== 'rechazado' && m.fecha >= hoyISO()) {
+          const staff = db.usuarios.filter((u) => u.rol === 'entrenador' && u.activo !== false).map((u) => u.rut);
+          notificar(db, staff.concat(m.citadoPor ? [m.citadoPor] : []), j.nombre + ' no puede ir vs ' + m.rival,
+            m.categoria + ': ' + (reservasDe(db, m).length ? 'puedes cambiarlo por un jugador de la reserva.' : 'no quedan jugadores en reserva.'), 'partidos');
+        }
+        break;
+      }
+      case 'citacion.reemplazar': {
+        // Cambia citados que no asisten por jugadores de la reserva del partido.
+        exigir(esStaff);
+        const m = db.partidos.find((x) => x.id === p.id);
+        if (!m) throw err('Partido no encontrado');
+        const cambios = (Array.isArray(p.cambios) ? p.cambios : []).filter((c) => c && c.entra).slice(0, 30);
+        if (!cambios.length) throw err('Elige quién entra');
+        const reserva = new Set(reservasDe(db, m));
+        const usados = new Set();
+        cambios.forEach((c) => {
+          if (!m.citados[c.sale]) throw err('Ese jugador ya no está citado');
+          if (!reserva.has(c.entra) || usados.has(c.entra)) throw err(nombreJugador(db, c.entra) + ' no está en la reserva de este partido');
+          usados.add(c.entra);
+        });
+        m.reemplazos = m.reemplazos || [];
+        cambios.forEach((c) => {
+          delete m.citados[c.sale];
+          m.citados[c.entra] = 'pendiente';
+          m.reemplazos.push({ sale: c.sale, entra: c.entra, fecha: hoyISO(), por: actor.rut });
+        });
+        m.reemplazos = m.reemplazos.slice(-40);
+        if (m.fecha >= hoyISO()) {
+          notificar(db, conApoderados(db, Array.from(usados)), 'Convocatoria: ' + m.categoria + ' vs ' + m.rival,
+            'Entras a la convocatoria del ' + m.fecha.split('-').reverse().slice(0, 2).join('/') + (m.hora ? ' ' + m.hora + ' hrs' : '') + '. Confirma tu asistencia en la app.', 'perfil');
+        }
         break;
       }
 
@@ -1976,10 +2018,14 @@
     v.partidos = v.partidos.filter((m) => m.categoria === yo.categoria || m.citados[rut]).map((m) => {
       const r = Object.assign({}, m, {
         miCitacion: m.citados[rut] || null,
+        // En reserva: es de la categoría, no quedó citado y el partido ya tiene convocatoria.
+        enReserva: !m.citados[rut] && m.categoria === yo.categoria && Object.keys(m.citados).length > 0,
+        reemplazado: !m.citados[rut] && (m.reemplazos || []).some((x) => x.sale === rut),
         citadosLista: Object.keys(m.citados).map(nombreDe).sort(porNumero),
         miEstadistica: (m.estadisticas || {})[rut] || null,
       });
       delete r.citados;
+      delete r.reemplazos;
       delete r.estadisticas;
       delete r.notas;
       return r;
@@ -2013,6 +2059,6 @@
     hashClave, verificarClave, cambiarClave, prepararAccion,
     MESES_LARGOS, esMenor, apoderadosDe, siguienteCategoria, cambioTemporada,
     CAMPOS_ESTADISTICA, tablaGoleadores, estadisticasJugador, TESTS_FISICOS, cumpleanosDelMes,
-    reporteMensual, recordatoriosPendientes, marcarRecordatorio, crearXlsx, crc32, encuestaCerrada, MAX_FOTOS_ALBUM, pesos,
+    reporteMensual, recordatoriosPendientes, marcarRecordatorio, crearXlsx, crc32, encuestaCerrada, reservasDe, MAX_FOTOS_ALBUM, pesos,
   };
 });

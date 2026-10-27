@@ -588,3 +588,42 @@ test('notificaciones: citación avisa al jugador y a su apoderado', () => {
   C.applyAction(db, APO, { type: 'citacion.responder', payload: { hijo: SOFIA, id: m.id, respuesta: 'confirmado' } });
   assert.strictEqual(m.citados[SOFIA], 'confirmado');
 });
+
+test('reserva por partido: quien no puede se cambia por un no convocado', () => {
+  const db = C.dbEjemplo();
+  const m = db.partidos.find((x) => x.rival === 'UdeC');
+  const RENATO = C.rutDesdeCuerpo(24678901), BENJA = C.rutDesdeCuerpo(24890123), LUCAS = C.rutDesdeCuerpo(24991122), NACHO = C.rutDesdeCuerpo(24993344);
+  assert.deepStrictEqual(C.reservasDe(db, m).sort(), [LUCAS, NACHO].sort());
+  // La reserva es por partido: en otro partido de la categoría Lucas puede estar citado.
+  const otro = db.partidos.find((x) => x.rival === 'Liceo Alemán');
+  assert.deepStrictEqual(C.reservasDe(db, otro).sort(), [LUCAS, NACHO].sort());
+
+  // Al bajarse, el entrenador recibe el aviso.
+  db.notificar = [];
+  C.applyAction(db, RENATO, { type: 'citacion.responder', payload: { id: m.id, respuesta: 'rechazado' } });
+  assert.ok(db.notificar.some((n) => n.para.includes(ENT) && /no puede ir/.test(n.titulo)));
+
+  assert.throws(() => C.applyAction(db, RENATO, { type: 'citacion.reemplazar', payload: { id: m.id, cambios: [{ sale: BENJA, entra: LUCAS }] } }), /permiso/i);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'citacion.reemplazar', payload: { id: m.id, cambios: [{ sale: BENJA, entra: RENATO }] } }), /reserva/);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'citacion.reemplazar', payload: { id: m.id, cambios: [{ sale: BENJA, entra: LUCAS }, { sale: RENATO, entra: LUCAS }] } }), /reserva/);
+
+  db.notificar = [];
+  C.applyAction(db, ENT, { type: 'citacion.reemplazar', payload: { id: m.id, cambios: [{ sale: BENJA, entra: LUCAS }, { sale: RENATO, entra: NACHO }] } });
+  assert.strictEqual(m.citados[LUCAS], 'pendiente');
+  assert.strictEqual(m.citados[NACHO], 'pendiente');
+  assert.ok(!m.citados[BENJA] && !m.citados[RENATO]);
+  assert.deepStrictEqual(C.reservasDe(db, m).sort(), [BENJA, RENATO].sort());
+  assert.strictEqual(m.reemplazos.length, 2);
+  assert.ok(db.notificar.some((n) => n.para.includes(LUCAS) && n.para.includes(NACHO)));
+
+  // Lo que ve cada jugador.
+  const vR = C.viewFor(db, RENATO).partidos.find((x) => x.id === m.id);
+  assert.strictEqual(vR.miCitacion, null);
+  assert.strictEqual(vR.reemplazado, true);
+  assert.strictEqual(vR.reemplazos, undefined);
+  const vL = C.viewFor(db, LUCAS).partidos.find((x) => x.id === m.id);
+  assert.strictEqual(vL.miCitacion, 'pendiente');
+  assert.strictEqual(vL.enReserva, false);
+  C.applyAction(db, LUCAS, { type: 'citacion.responder', payload: { id: m.id, respuesta: 'confirmado' } });
+  assert.strictEqual(m.citados[LUCAS], 'confirmado');
+});

@@ -79,6 +79,10 @@ Al citar a un jugador no habilitado, la app avisa al entrenador.
   rival, hora, fecha, calcetas, lugar e indicaciones, en el mismo formato que la citación de
   WhatsApp. Se puede descargar en PDF (opción "Guardar como PDF" del diálogo de impresión),
   copiar el texto para WhatsApp o compartirla. Los jugadores confirman con "Voy" o "No puedo".
+- **Reserva y cambios:** los jugadores de la categoría que no quedan citados forman la reserva
+  de ese partido (cambia con cada convocatoria). Si un citado marca "No puedo", el entrenador
+  recibe el aviso y con "Cambiar" elige quién de la reserva entra en su lugar; el que entra
+  recibe la notificación para confirmar y el que sale vuelve a la reserva.
   Quien cita puede agregar el cuerpo técnico (Entrenador A, B y C, kinesiólogo/a y
   enfermero/a); sólo aparecen en la convocatoria los cargos con nombre.
 - **Consentimiento informado:** la primera vez que un jugador entra debe firmar que su salud es

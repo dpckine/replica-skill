@@ -764,3 +764,48 @@ body.sin-sesion .toast { bottom: calc(24px + var(--seguro-abajo)); }
 .pdf-tabla th { text-align: left; border-bottom: 2px solid #14307A; padding: 5px 4px; }
 .pdf-tabla td { border-bottom: 1px solid #ddd; padding: 4px; }
 .pdf-tabla tr { break-inside: avoid; }
+
+/* Reserva y cambios de convocados */
+.btn.mini .ico { width: 16px; height: 16px; }
+.btn-chip {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; vertical-align: middle;
+  min-height: 28px; padding: 2px 10px 2px 8px; border-radius: 8px; border: 1px solid var(--contorno-2);
+  background: var(--sup-0); color: var(--primario); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.btn-chip:hover { background: var(--primario-cont); border-color: transparent; color: var(--sobre-primario-cont); }
+.btn-chip .ico { width: 15px; height: 15px; }
+.reserva { margin-top: 12px; background: var(--sup-1); border-radius: 20px; padding: 2px 16px 14px; border: 1px dashed var(--contorno-2); }
+.reserva .sub { margin: 12px 0 8px; }
+.chip-jugador {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px 4px 4px; border-radius: 8px;
+  background: var(--sup-0); border: 1px solid var(--contorno-2); font-size: 13px; color: var(--texto);
+}
+.chip-jugador b { min-width: 22px; height: 22px; padding: 0 4px; border-radius: 6px; display: grid; place-items: center; font-size: 11px; background: var(--primario-cont); color: var(--sobre-primario-cont); }
+.chip-jugador.aviso-chip { border-color: var(--alerta); }
+.chip-jugador.aviso-chip b { background: var(--alerta-cont); color: var(--alerta); }
+.lista.cambios { display: grid; gap: 10px; margin: 0; }
+.cambios > li.cambio {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
+  background: var(--sup-0); border-radius: var(--radio); padding: 12px; box-shadow: var(--sombra-1); border: 0;
+}
+.cambio .etq { display: block; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--suave); margin-bottom: 4px; }
+.cambio-sale { min-width: 0; }
+.cambio-sale b { display: block; overflow-wrap: anywhere; margin-bottom: 4px; }
+.cambio-sale .insignia { margin: 0; }
+.cambio-flecha { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--primario-cont); color: var(--sobre-primario-cont); }
+.cambio-flecha .ico { width: 20px; height: 20px; }
+.cambio-entra { min-width: 0; }
+.cambio-entra select {
+  width: 100%; min-height: 48px; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--contorno);
+  border-radius: 12px 12px 0 0; background: var(--sup-3); color: var(--texto); font: inherit; font-size: 15px;
+}
+.cambio-entra select:focus { outline: none; border-bottom: 2px solid var(--primario); }
+.cambios > li.cambio + li.cambio::before { display: none; }
+@media (max-width: 480px) {
+  .cambios > li.cambio { grid-template-columns: 1fr; gap: 12px; }
+  .cambio-sale { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .cambio-sale .etq { width: 100%; margin: 0; }
+  .cambio-sale b { margin: 0; }
+  .cambio-flecha { display: none; }
+}
+.chip-jugador small { color: var(--alerta); font-size: 11px; font-weight: 600; }
