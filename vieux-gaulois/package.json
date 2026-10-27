@@ -1,0 +1,13 @@
+{
+  "name": "vieux-gaulois-handball",
+  "version": "1.0.0",
+  "private": true,
+  "description": "App de gestión del club Vieux Gaulois Handball: directiva, entrenadores y jugadores.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}

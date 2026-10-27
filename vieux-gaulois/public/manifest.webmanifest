@@ -1,0 +1,9 @@
+{
+  "name": "Vieux Gaulois Handball",
+  "short_name": "Vieux Gaulois",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F4F2EC",
+  "theme_color": "#1E2F6E",
+  "icons": [{ "src": "escudo.png", "sizes": "487x513", "type": "image/png", "purpose": "any" }]
+}
