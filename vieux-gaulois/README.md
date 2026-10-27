@@ -1,11 +1,14 @@
 # Vieux Gaulois Handball
 
-App de gestión del club con tres accesos: **Directiva**, **Entrenadores** y **Jugadores**.
+App de gestión del club con cuatro accesos: **Directiva**, **Entrenadores**, **Jugadores** y **Apoderados**.
 
 ## Ingreso
 
 - **Jugadores:** usuario = RUT (con o sin puntos y guion), clave = **primeros 4 dígitos del RUT**
   (ej. RUT 20.123.456-5, clave `2012`). La directiva puede restablecerla a esos 4 dígitos.
+- **Apoderados:** igual que los jugadores, con su RUT y los 4 primeros dígitos. La cuenta se crea
+  al inscribir a un menor (o desde su ficha, "+ Agregar apoderado"). Un apoderado con varios hijos
+  en el club los ve todos y cambia entre ellos con un toque.
 - **Entrenadores y directiva:** **usuario y clave definidos por la directiva** (Ajustes).
   La directiva puede cambiarles la clave cuando quiera.
 - **Cuenta inicial de directiva:** usuario `vieux`, clave `vieuxg1234`. Cámbiala con el botón "Clave".
@@ -29,6 +32,14 @@ App de gestión del club con tres accesos: **Directiva**, **Entrenadores** y **J
 | Ver convenios del club y calendario de partidos | ✓ | ✓ | ✓ |
 | Proponer un convenio (se publica cuando la directiva lo aprueba) | | ✓ | ✓ |
 | Confirmar o rechazar una citación | | | ✓ |
+| Credencial digital con foto y RUT, ficha médica propia | | | ✓ |
+| Votar en encuestas, ver galería, goleadores y su evaluación física | | | ✓ |
+| Cargar resultado, comentario y estadísticas de cada partido | ✓ | ✓ | |
+| Evaluación física y plan de cada entrenamiento | ✓ | ✓ | |
+| Ver y editar la ficha médica de los jugadores | | ✓ | |
+| Subir fotos a la galería (máximo 3 por álbum) | | ✓ | |
+| Inventario, encuestas | ✓ | ✓ | |
+| Reporte mensual en Excel y PDF, recordatorios de cuotas | ✓ | | |
 | Inscribir jugadores y editar sus datos | ✓ | ✓ | |
 | Programar entrenamientos y marcar asistencia | ✓ | ✓ | |
 | Crear partidos y citar jugadores | ✓ | ✓ | |
@@ -71,8 +82,44 @@ Al citar a un jugador no habilitado, la app avisa al entrenador.
   Quien cita puede agregar el cuerpo técnico (Entrenador A, B y C, kinesiólogo/a y
   enfermero/a); sólo aparecen en la convocatoria los cargos con nombre.
 - **Consentimiento informado:** la primera vez que un jugador entra debe firmar que su salud es
-  compatible con el deporte y que se compromete a asistir y a pagar sus cuotas. Los menores de
-  edad firman con su apoderado. Si la directiva cambia el texto puede pedir una nueva firma.
+  compatible con el deporte y que se compromete a asistir y a pagar sus cuotas. Por los menores de
+  edad firma su apoderado desde su cuenta. Si la directiva cambia el texto puede pedir una nueva firma.
+- **Apoderados:** los menores de 18 se inscriben con su apoderado. La cuenta del menor queda en
+  espera hasta que el apoderado entra con su RUT y firma el consentimiento por él. Desde su cuenta
+  el apoderado ve el perfil de su hijo o hija, paga e informa pagos, firma documentos, confirma
+  citaciones y conversa con la directiva y los entrenadores en nombre de su hijo.
+- **Cambio de temporada automático:** el 1 de enero quien estaba en 1er año pasa a 2do, y quien
+  estaba en 2do sube a 1er año de la siguiente categoría (Infantil 2do año → Cadete 1er año), en
+  la misma rama. Si el número de camiseta ya estaba ocupado en la nueva categoría, queda libre
+  para reasignarlo. En el Inicio aparece el resumen de quién subió.
+- **Estadísticas:** en cada partido jugado el entrenador carga el marcador, un comentario y, por
+  jugador, goles, atajadas, exclusiones de 2 minutos y tarjetas (amarilla, roja, azul). Con eso se
+  arma la tabla de goleadores de cada categoría; cada jugador ve la suya y sus números.
+- **Evaluación física:** el entrenador registra por categoría el test 5-10-5, salto alto,
+  flexiones y sentadillas en 30 segundos, altura y peso. Cada jugador ve un gráfico de su
+  evolución con lo que mejoró o bajó desde la medición anterior.
+- **Plan de entrenamiento:** cada sesión puede llevar su lista de ejercicios con minutos,
+  detalle y una jugada de la pizarra adjunta. El entrenador decide si los jugadores la ven.
+- **Ficha médica:** grupo sanguíneo, alergias, enfermedades, medicamentos, previsión, seguro y
+  contacto de emergencia. La ven y editan los entrenadores, el jugador y su apoderado; la
+  directiva no la ve.
+- **Credencial digital:** foto, nombre, RUT, categoría y estado de cuotas, con la fecha y hora en
+  vivo para mostrarla en los convenios.
+- **Cumpleaños del mes** en el Inicio (y los de su categoría en el perfil de cada jugador).
+- **Recordatorios de cuotas:** automáticos unos días antes del vencimiento (y, si se quiere,
+  después, si sigue impaga), por notificación, correo o WhatsApp, al jugador o a su apoderado si
+  es menor. Se envían una vez por cuota y no se envían si el pago ya fue informado. En Finanzas
+  también hay botones para enviar el recordatorio a mano por WhatsApp o correo.
+- **Reporte mensual:** ingresos (cuotas, federativos, otros cobros y otros ingresos), gastos,
+  balance y jugadores con cuotas atrasadas, para descargar en Excel (.xlsx) o PDF.
+- **Inventario:** balones, petos, camisetas y otros materiales, con quién tiene qué, cuántos
+  quedan disponibles y las devoluciones. Cada jugador ve el material a su cargo.
+- **Encuestas:** para todo el club o una categoría, con fecha de cierre. Los votos son anónimos.
+- **Galería:** sólo los entrenadores suben fotos (plantel, partido o evento), máximo 3 por álbum
+  y achicadas en el teléfono antes de subirlas para no llenar el servidor.
+- **Notificaciones push:** cada persona las activa en "Mi cuenta". Avisan de citaciones,
+  mensajes, avisos, encuestas, fotos, pagos revisados y cuotas por vencer. En iPhone primero hay
+  que agregar la app a la pantalla de inicio (Compartir → Agregar a inicio).
 - **Compromiso de becados:** la directiva envía (en Documentos) un compromiso extra a los
   jugadores becados, que lo firman al ingresar. En Documentos se ve quién firmó y cuándo.
 
@@ -101,6 +148,9 @@ La primera vez se crea `data/db.json` con datos de ejemplo:
 | Jugador (debe firmar el consentimiento al entrar) | 20.123.456-5 | 2012 |
 | Jugadora becada (firma el compromiso) | 20.555.666-4 | 2055 |
 | Entrenador que también juega | tomas | tomas1234 |
+| Apoderada de Sofía y Martín (firma por ellos) | 15.678.901-1 | 1567 |
+| Jugadora menor (espera la firma de su apoderada) | 24.901.234-3 | 2490 |
+| Cadete con estadísticas y evaluación física | 24.678.901-0 | 2467 |
 
 ### Empezar con el club real (sin datos de ejemplo)
 
@@ -112,7 +162,23 @@ Crea una base vacía con una sola cuenta de directiva (`vieux` / `vieuxg1234`). 
 (Ajustes) y jugadores (Jugadores).
 
 Variables: `PORT` (puerto, 3000 por defecto) y `DATA_FILE` (ruta del archivo de datos).
-Respalda `data/db.json` con regularidad: ahí está toda la información del club.
+Respalda la carpeta `data/` con regularidad: ahí están los datos (`db.json`), las fotos
+(`fotos/`), las claves de las notificaciones (`vapid.json`) y los dispositivos suscritos (`push.json`).
+
+### Recordatorios por correo y WhatsApp
+
+El servidor revisa cada hora si hay recordatorios que enviar. Las notificaciones push funcionan
+sin configurar nada. Para el correo y WhatsApp hay que darle al servidor estas variables:
+
+| Variable | Para qué |
+|---|---|
+| `SMTP_HOST`, `SMTP_PORT` (465 o 587), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Correo del club. Con Gmail: `smtp.gmail.com`, puerto 465 y una "contraseña de aplicación". |
+| `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID` | WhatsApp Business Cloud API de Meta (token permanente y el ID del número del club). |
+| `WHATSAPP_PLANTILLA` (por defecto `recordatorio_cuota`) | Meta exige una plantilla aprobada para escribir primero. Créala en español con un solo parámetro en el cuerpo, por ejemplo: `{{1}}`. El servidor pone ahí el texto del recordatorio. |
+| `VAPID_SUJETO` (por defecto `mailto:contacto@vieuxgaulois.cl`) | Correo de contacto que se envía a los servicios de notificaciones. |
+
+Después, en Ajustes → "Recordatorios automáticos de cuotas", la directiva elige los días de
+anticipación y qué canales usar. Ahí mismo se ve el registro de los últimos envíos.
 
 ### Modo demo
 
@@ -125,11 +191,13 @@ uso real, porque cada teléfono vería datos distintos.
 
 Necesita un servidor Node con disco persistente (Render, Railway, Fly.io, un VPS, etc.):
 comando de inicio `npm start` y `DATA_FILE` apuntando a un volumen persistente.
-Usa HTTPS para que las claves no viajen en texto plano.
+Usa HTTPS para que las claves no viajen en texto plano (las notificaciones push también lo exigen).
 
 ## Estructura
 
-- `server.js`: servidor HTTP, sesiones, bloqueo por intentos y guardado en JSON.
+- `server.js`: servidor HTTP, sesiones, bloqueo por intentos, guardado en JSON, fotos en disco, notificaciones y recordatorios.
+- `lib/`: notificaciones push (`webpush.js`), correo SMTP (`correo.js`) y WhatsApp (`whatsapp.js`), sin dependencias.
+- `public/sw.js`: recibe las notificaciones en el teléfono.
 - `public/core.js`: reglas del club compartidas por servidor y navegador (RUT, permisos por rol, qué ve cada usuario).
 - `public/app.js`, `public/styles.css`, `public/index.html`: la interfaz.
-- `test/`: pruebas de permisos, RUT, cuotas, asistencia y API.
+- `test/`: pruebas de permisos, RUT, cuotas, asistencia, apoderados, temporada, estadísticas, cifrado push, correo y API.

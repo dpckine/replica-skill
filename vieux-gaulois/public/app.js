@@ -68,6 +68,8 @@
     modo: null, demo: false, view: null, tab: null,
     filtroCat: leerLS('vg_cat') || '', busqueda: '', anioFin: ANIO, verInactivos: false, verPasados: false,
     hilo: null, borrador: {}, piz: null,
+    // Apoderado: S.apo guarda la vista completa (todos sus hijos); S.view es la del hijo elegido.
+    apo: null, hijo: leerLS('vg_hijo') || '', catEst: '', catFis: '', verDevueltos: false,
   };
 
   // ---------- Backend: servidor real o modo demo local ----------
@@ -94,15 +96,23 @@
     async accion(type, payload) { return (await this.pedir('POST', 'api/action', { type, payload })).view; },
     async clave(actual, nueva) { return (await this.pedir('POST', 'api/clave', { actual, nueva })).view; },
     async salir() { try { await this.pedir('POST', 'api/logout'); } catch (e) { /* ya expirada */ } this.token = null; guardarLS('vg_token', null); },
+    foto: (id) => 'api/foto/' + id + '?t=' + encodeURIComponent(Servidor.token || ''),
   };
 
   const Local = {
     db: null, rut: leerLS('vg_rut'),
     cargar() {
       try { this.db = JSON.parse(leerLS('vg_db')); } catch (e) { this.db = null; }
-      if (!this.db || !this.db.usuarios || this.db.version !== C.dbVacia().version) { this.db = C.dbEjemplo(); this.guardar(); this.rut = null; }
+      const nueva = !this.db || !this.db.usuarios || this.db.version !== C.dbVacia().version;
+      if (nueva) { this.db = C.dbEjemplo(); this.rut = null; }
+      if ((C.cambioTemporada(this.db) || nueva)) { try { this.guardar(); } catch (e) { /* sin almacenamiento */ } }
     },
-    guardar() { guardarLS('vg_db', JSON.stringify(this.db)); },
+    guardar() {
+      // En modo demo no hay a quién enviar notificaciones ni archivos que borrar.
+      this.db.notificar = [];
+      this.db.fotosBorradas = [];
+      localStorage.setItem('vg_db', JSON.stringify(this.db));
+    },
     async login(rut, clave) {
       const r = C.idDeIngreso(rut);
       if (!r) throw new ErrorApi('Ingresa tu RUT (jugadores) o tu usuario (entrenadores y directiva)');
@@ -115,23 +125,48 @@
     async accion(type, payload) {
       const copia = C.clone(this.db);
       C.applyAction(copia, this.rut, await C.prepararAccion({ type, payload }, sha256));
-      this.db = copia; this.guardar();
+      const antes = this.db;
+      this.db = copia;
+      try { this.guardar(); } catch (e) {
+        this.db = antes;
+        throw new ErrorApi('Este navegador no tiene más espacio para la demo (las fotos ocupan mucho). Borra un álbum o reinicia la demo.');
+      }
       return C.viewFor(this.db, this.rut);
     },
     async clave(actual, nueva) {
       const copia = C.clone(this.db);
       await C.cambiarClave(copia, this.rut, actual, nueva, sha256);
-      this.db = copia; this.guardar();
+      this.db = copia; try { this.guardar(); } catch (e) { /* sin espacio */ }
       return C.viewFor(this.db, this.rut);
     },
     async salir() { this.rut = null; guardarLS('vg_rut', null); },
+    foto(id) { return (this.db.fotos || {})[id] || ''; },
   };
 
   const B = () => (S.modo === 'servidor' ? Servidor : Local);
 
+  // Para el apoderado, cada acción va a nombre del hijo o hija que está mirando.
+  const llamar = (type, payload) => B().accion(type, S.apo ? Object.assign({ hijo: S.view.yo }, payload) : payload);
+
+  // Recibe la vista del servidor. La del apoderado trae una vista por hijo: se muestra la elegida.
+  function recibir(v) {
+    if (v && v.hijos) {
+      S.apo = v;
+      const elegido = v.hijos.find((x) => x.yo === S.hijo) || v.hijos[0];
+      S.view = elegido ? Object.assign({}, elegido, { apoderado: v.apoderado, servidor: v.servidor }) : null;
+      if (!elegido) S.sinHijos = v.apoderado;
+      return S.view;
+    }
+    S.apo = null;
+    S.view = v;
+    return v;
+  }
+  const fotoUrl = (id) => (id ? B().foto(id) : '');
+  const yoId = () => S.view.yoReal || S.view.yo;
+
   async function accion(type, payload, okMsg) {
     try {
-      S.view = await B().accion(type, payload);
+      recibir(await llamar(type, payload));
       render();
       if (okMsg) toast(okMsg, 'ok');
       return true;
@@ -153,7 +188,10 @@
   const jugadores = (todos) => S.view.usuarios.filter((u) => u.rol === 'jugador' && (todos || u.activo !== false)).sort(ordenar);
   const filtrarCat = (lista, campo) => (S.filtroCat ? lista.filter((x) => (campo ? x[campo] : x.categoria) === S.filtroCat) : lista);
   const hab = (rut) => C.habilitado(S.view, rut, ANIO);
-  const cuentaEntrenador = (rutJugador) => S.view.usuarios.find((u) => u.rol !== 'jugador' && u.activo !== false && u.jugadorRut === rutJugador);
+  const esPersonal = (u) => u.rol === 'directiva' || u.rol === 'entrenador';
+  const cuentaEntrenador = (rutJugador) => S.view.usuarios.find((u) => esPersonal(u) && u.activo !== false && u.jugadorRut === rutJugador);
+  const apoderados = (rut) => S.view.usuarios.filter((u) => u.rol === 'apoderado' && (u.hijos ? u.hijos.includes(rut) && u.activo !== false : S.view.yo === rut));
+  const menor = (j) => !!(j && j.fechaNac && C.edad(j.fechaNac) < 18);
   const lesionesActivas = (rut) => S.view.lesiones.filter((l) => l.rut === rut && l.estado === 'activa');
   const sinVer = () => S.view.lesiones.filter((l) => !l.vistoPor.includes(S.view.yo));
   const porFecha = (a, b) => (a.fecha + (a.hora || '')).localeCompare(b.fecha + (b.hora || ''));
@@ -220,6 +258,19 @@
     pdf: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
     copiar: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
     compartir: '<path d="M12 3v12M7.5 7.5L12 3l4.5 4.5M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/>',
+    estadisticas: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
+    fisico: '<path d="M6.5 7v10M17.5 7v10M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/>',
+    encuestas: '<rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M7.5 9l1.5 1.5 3-3M7.5 15.5h.01M12.5 9.5h4M12.5 15.5h4"/>',
+    galeria: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/>',
+    inventario: '<path d="M3.5 8L12 3.5 20.5 8v8L12 20.5 3.5 16z"/><path d="M3.5 8L12 12.5 20.5 8M12 12.5v8"/>',
+    camara: '<path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
+    credencial: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="8.5" cy="11" r="2.2"/><path d="M5 16a3.5 3.5 0 0 1 7 0M14.5 10h4M14.5 13.5h4"/>',
+    campana: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+    medica: '<rect x="3.5" y="6" width="17" height="14" rx="2.5"/><path d="M9 6V4h6v2M12 10v6M9 13h6"/>',
+    cumple: '<path d="M4 20h16v-7a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1zM4 16c2 1.2 4-1.2 6 0s4-1.2 6 0 3 .5 4 0"/><path d="M12 12V9M12 6.5c-.8-.6-.8-1.6 0-2.5.8.9.8 1.9 0 2.5z"/>',
+    excel: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 11l5 6M14 11l-5 6"/>',
+    whatsapp: '<path d="M4 20l1.2-3.6A8 8 0 1 1 8 19z"/><path d="M9 9.5c.3 2.3 2.2 4.2 4.5 4.5l1-1.2 1.8.8c-.3 1.2-1.3 1.9-2.5 1.8A6 6 0 0 1 8.4 10c-.1-1.2.6-2.2 1.8-2.5l.8 1.8z"/>',
+    correo: '<rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M3.5 7l8.5 6 8.5-6"/>',
   };
   const icono = (n) => '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">' + ICONOS[n] + '</svg>';
 
@@ -308,7 +359,8 @@
   // ---------- Login ----------
   function vistaLogin() {
     const demo = S.demo ? '<div class="demo"><b>Cuentas de prueba</b><span>toca una para rellenar</span>' +
-      [['Directiva', 'vieux', 'vieuxg1234'], ['Entrenador', 'jorge', 'jorge1234'], ['Jugador (firma al entrar)', '20.123.456-5', '2012'], ['Jugadora becada', '20.555.666-4', '2055'], ['Entrenador y jugador', 'tomas', 'tomas1234']]
+      [['Directiva', 'vieux', 'vieuxg1234'], ['Entrenador', 'jorge', 'jorge1234'], ['Jugador (firma al entrar)', '20.123.456-5', '2012'], ['Jugadora becada', '20.555.666-4', '2055'],
+        ['Apoderada (2 hijos, firma)', '15.678.901-1', '1567'], ['Jugadora menor (espera firma)', '24.901.234-3', '2490'], ['Cadete (estadísticas)', '24.678.901-' + C.dvRut(24678901), '2467'], ['Entrenador y jugador', 'tomas', 'tomas1234']]
         .map(([r, u, c]) => '<button type="button" data-act="rellenarDemo" data-usuario="' + u + '" data-clave="' + c + '"><span>' + r + '</span><b>' + u + '</b><small>' + c + '</small></button>').join('') +
       '</div>' : '';
     return '<div class="login"><div class="login-fondo" aria-hidden="true"></div>' + botonTema() + '<div class="login-caja">' +
@@ -319,29 +371,54 @@
       '<input name="clave" type="password" aria-label="Clave" autocomplete="current-password" placeholder="Clave" required></div>' +
       '<div class="error" id="login-error"></div>' +
       '<button class="btn primario ancho">Ingresar</button></form>' +
-      '<p class="login-ayuda"><b>Jugadores:</b> RUT y los 4 primeros dígitos del RUT.<br><b>Entrenadores y directiva:</b> usuario y clave entregados por la directiva.</p>' +
+      '<p class="login-ayuda"><b>Jugadores y apoderados:</b> RUT y los 4 primeros dígitos del RUT.<br><b>Entrenadores y directiva:</b> usuario y clave entregados por la directiva.</p>' +
       demo + '</div></div>';
   }
 
   // ---------- Firma de documentos (consentimiento / becados) ----------
   function vistaFirma(doc) {
     const j = yo();
-    const menor = j.fechaNac && C.edad(j.fechaNac) < 18;
+    const apo = S.apo ? S.view.apoderado : null;
     const parrafos = doc.texto.split(/\n\s*\n/).map((p) => '<p>' + h(p).replace(/\n/g, '<br>') + '</p>').join('');
     return '<div class="firma"><div class="firma-caja">' +
       '<img src="' + ESCUDO + '" alt="" class="firma-escudo"><div class="franja corta" aria-hidden="true"><i></i><i></i><i></i></div>' +
-      '<p class="firma-sub">' + (doc.id === 'consentimiento' ? 'Antes de comenzar' : 'La directiva te envió un documento') + '</p>' +
+      (S.apo && S.apo.hijos.length > 1 ? selectorHijos() : '') +
+      '<p class="firma-sub">' + (apo ? 'Firma como apoderado de ' + h(j.nombre) : doc.id === 'consentimiento' ? 'Antes de comenzar' : 'La directiva te envió un documento') + '</p>' +
       '<h1>' + h(doc.titulo) + '</h1>' +
       '<div class="tarjeta firma-texto">' + parrafos + '</div>' +
       '<form id="form-firma"><input type="hidden" name="id" value="' + h(doc.id) + '">' +
       '<div class="tarjeta lista-chequeo">' + doc.puntos.map((p, i) => '<label class="celda-chequeo"><input type="checkbox" name="aceptados[]" value="' + i + '" required><span>' + h(p) + '</span></label>').join('') + '</div>' +
-      '<div class="tarjeta grupo-form">' + input('nombreFirma', '', 'placeholder="Tu nombre completo (firma)" required autocomplete="name"') +
-      (menor ? input('apoderado', '', 'placeholder="Nombre y RUT de tu apoderado" required') : '') + '</div>' +
-      (menor ? '<p class="seccion-pie">Eres menor de edad: tu apoderado firma contigo.</p>' : '') +
-      '<p class="seccion-pie">Firmas como ' + h(j.nombre) + ' (' + h(C.formatearRut(j.rut)) + ') el ' + h(fLarga(HOY)) + '.</p>' +
+      '<div class="tarjeta grupo-form">' + input('nombreFirma', '', 'placeholder="' + (apo ? 'Tu nombre completo (apoderado)' : 'Tu nombre completo (firma)') + '" required autocomplete="name"') + '</div>' +
+      '<p class="seccion-pie">' + (apo ? 'Firmas como ' + h(apo.nombre) + ' (' + h(C.formatearRut(apo.rut)) + '), apoderado de ' + h(j.nombre) + ' (' + h(C.formatearRut(j.rut)) + '), el ' + h(fLarga(HOY)) + '.'
+        : 'Firmas como ' + h(j.nombre) + ' (' + h(C.formatearRut(j.rut)) + ') el ' + h(fLarga(HOY)) + '.') + '</p>' +
       '<div class="error" id="form-error"></div>' +
       '<button class="btn primario ancho">Firmo y acepto</button></form>' +
       '<button class="btn-texto centro" data-act="salir">Salir</button></div></div>';
+  }
+
+  // Menor de edad: su cuenta se habilita cuando el apoderado firma el consentimiento desde su cuenta.
+  function vistaEsperaApoderado() {
+    const j = yo();
+    const aps = apoderados(j.rut);
+    return '<div class="firma"><div class="firma-caja">' +
+      '<img src="' + ESCUDO + '" alt="" class="firma-escudo"><div class="franja corta" aria-hidden="true"><i></i><i></i><i></i></div>' +
+      '<p class="firma-sub">Hola, ' + h(j.nombre.split(/\s+/)[0]) + '</p><h1>Tu cuenta se activa cuando tu apoderado firme</h1>' +
+      '<div class="tarjeta firma-texto">' + (aps.length
+        ? '<p>Como eres menor de edad, el consentimiento informado lo firma tu apoderado desde su propia cuenta:</p><ul>' + aps.map((a) => '<li><b>' + h(a.nombre) + '</b></li>').join('') + '</ul>' +
+          '<p>Entra con su RUT y, como clave, los 4 primeros dígitos de su RUT. Apenas firme, podrás usar la app.</p>'
+        : '<p>Aún no está registrado tu apoderado. Pídele a tu entrenador o a la directiva que lo agreguen en tu ficha; con eso tu apoderado podrá entrar y firmar.</p>') + '</div>' +
+      '<button class="btn primario ancho" data-act="recargar">Ya firmó: actualizar</button>' +
+      '<button class="btn-texto centro" data-act="salir">Salir</button></div></div>';
+  }
+
+  // Apoderado con más de un hijo o hija en el club: elige a quién está mirando.
+  function selectorHijos() {
+    return '<div class="hijos" role="tablist" aria-label="Hijos">' + S.apo.hijos.map((x) => {
+      const u = x.usuarios[0];
+      const pend = (x.pendientes || []).length;
+      return '<button class="chip-hijo' + (x.yo === S.view.yo ? ' activo' : '') + '" data-act="elegirHijo" data-rut="' + h(x.yo) + '">' + h(u.nombre.split(/\s+/)[0]) +
+        '<small>' + h(u.categoria) + '</small>' + (pend ? '<i class="punto">' + pend + '</i>' : '') + '</button>';
+    }).join('') + '</div>';
   }
 
   // ---------- Pestañas por rol ----------
@@ -349,15 +426,16 @@
     inicio: 'Inicio', avisos: 'Avisos', jugadores: 'Jugadores', finanzas: 'Finanzas', entrenamientos: 'Entrenamientos', partidos: 'Partidos',
     lesiones: 'Lesiones', documentos: 'Documentos', convenios: 'Convenios', ajustes: 'Ajustes', calendario: 'Calendario', perfil: 'Mi perfil', mas: 'Más',
     chat: 'Mensajes', pizarra: 'Pizarra', jugadas: 'Jugadas',
+    estadisticas: 'Estadísticas', fisico: 'Evaluación física', encuestas: 'Encuestas', galeria: 'Galería', inventario: 'Inventario',
   };
   const TABS = {
-    directiva: { barra: ['inicio', 'jugadores', 'finanzas', 'chat'], mas: ['partidos', 'entrenamientos', 'pizarra', 'avisos', 'lesiones', 'documentos', 'convenios', 'calendario', 'ajustes'] },
-    entrenador: { barra: ['inicio', 'jugadores', 'partidos', 'pizarra'], mas: ['entrenamientos', 'chat', 'avisos', 'lesiones', 'convenios', 'calendario'] },
-    jugador: { barra: ['perfil', 'finanzas', 'chat', 'avisos'], mas: ['calendario', 'jugadas', 'convenios'] },
+    directiva: { barra: ['inicio', 'jugadores', 'finanzas', 'chat'], mas: ['partidos', 'entrenamientos', 'estadisticas', 'fisico', 'pizarra', 'avisos', 'encuestas', 'galeria', 'lesiones', 'inventario', 'documentos', 'convenios', 'calendario', 'ajustes'] },
+    entrenador: { barra: ['inicio', 'jugadores', 'partidos', 'pizarra'], mas: ['entrenamientos', 'estadisticas', 'fisico', 'chat', 'avisos', 'encuestas', 'galeria', 'lesiones', 'inventario', 'convenios', 'calendario'] },
+    jugador: { barra: ['perfil', 'finanzas', 'chat', 'avisos'], mas: ['calendario', 'estadisticas', 'jugadas', 'encuestas', 'galeria', 'convenios'] },
   };
   const permitidas = () => { const t = TABS[rol()]; return t.barra.concat(t.mas, t.mas.length ? ['mas'] : []); };
   const contador = (tab) => (tab === 'lesiones' ? sinVer().length : tab === 'avisos' ? avisosNuevos() : tab === 'chat' ? chatSinLeer()
-    : tab === 'finanzas' && esDir() ? informesPendientes().length : tab === 'convenios' && esDir() ? propuestasConvenio().length : tab === 'mas' ? TABS[rol()].mas.reduce((s, t) => s + contador(t), 0) : 0);
+    : tab === 'finanzas' && esDir() ? informesPendientes().length : tab === 'convenios' && esDir() ? propuestasConvenio().length : tab === 'encuestas' && !esStaff() ? encuestasPorVotar().length : tab === 'mas' ? TABS[rol()].mas.reduce((s, t) => s + contador(t), 0) : 0);
 
   const BOTON_TITULO = {
     jugadores: () => esStaff() && '<button class="btn-redondo" data-act="nuevoJugador" aria-label="Inscribir jugador">' + icono('mas2') + '</button>',
@@ -370,6 +448,10 @@
     finanzas: () => (esDir() ? '<button class="btn-redondo" data-act="nuevoMovimiento" aria-label="Registrar ingreso o gasto">' + icono('mas2') + '</button>'
       : '<button class="btn-redondo" data-act="informarPago" aria-label="Informar un pago">' + icono('mas2') + '</button>'),
     chat: () => esStaff() && !S.hilo && '<button class="btn-redondo" data-act="nuevoChat" aria-label="Nuevo mensaje">' + icono('mas2') + '</button>',
+    fisico: () => esStaff() && '<button class="btn-redondo" data-act="nuevaEvaluacion" aria-label="Nueva evaluación">' + icono('mas2') + '</button>',
+    encuestas: () => esStaff() && '<button class="btn-redondo" data-act="nuevaEncuesta" aria-label="Nueva encuesta">' + icono('mas2') + '</button>',
+    galeria: () => rol() === 'entrenador' && '<button class="btn-redondo" data-act="nuevoAlbum" aria-label="Subir fotos">' + icono('mas2') + '</button>',
+    inventario: () => esStaff() && '<button class="btn-redondo" data-act="nuevoMaterial" aria-label="Agregar material">' + icono('mas2') + '</button>',
   };
 
   function shell(contenido) {
@@ -381,12 +463,15 @@
       return '<button data-act="tab" data-tab="' + id + '" class="' + (activa === id ? 'activa' : '') + '"' + (activa === id ? ' aria-current="page"' : '') + '>' +
         '<span class="ind">' + icono(id) + (n ? '<i class="punto">' + n + '</i>' : '') + '</span><span class="etq">' + NOMBRES[id] + '</span></button>';
     }).join('');
-    const iniciales = u.nombre.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+    const quien = S.apo ? S.view.apoderado : u;
+    const iniciales = quien.nombre.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
     const botonTitulo = BOTON_TITULO[S.tab] ? BOTON_TITULO[S.tab]() : '';
-    return '<header class="navbar"><img src="' + ESCUDO + '" alt=""><div class="navbar-tit"><b>Vieux Gaulois</b><small>' + h(u.cargo || u.rol) + '</small></div>' +
+    const sub = S.apo ? 'Apoderado · ' + u.nombre.split(/\s+/)[0] : (u.cargo || u.rol);
+    return '<header class="navbar"><img src="' + ESCUDO + '" alt=""><div class="navbar-tit"><b>Vieux Gaulois</b><small>' + h(sub) + '</small></div>' +
       botonTema() + '<button class="avatar" data-act="cuenta" aria-label="Mi cuenta">' + h(iniciales) + '</button></header>' +
       '<div class="franja" aria-hidden="true"><i></i><i></i><i></i></div>' +
       (S.modo === 'local' ? '<div class="modo-demo">Modo demo · los datos se guardan sólo en este navegador</div>' : '') +
+      (S.apo && S.apo.hijos.length > 1 ? selectorHijos() : '') +
       '<main class="tab-' + S.tab + (S.tab === 'chat' && S.hilo ? ' en-hilo' : '') + '"><div class="titulo-fila">' +
       (S.tab === 'chat' && S.hilo ? '<button class="btn-icono atras" data-act="cerrarHilo" aria-label="Volver">' + icono('atras') + '</button><h1 class="titulo-grande">' + h(tituloHilo(S.hilo)) + '</h1>'
         : '<h1 class="titulo-grande">' + h(NOMBRES[S.tab]) + '</h1>') + '</div>' + contenido + '</main>' +
@@ -469,13 +554,18 @@
     const hero = '<section class="perfil bienvenida"><div class="perfil-fila"><img class="hero-escudo" src="' + ESCUDO + '" alt=""><div class="crece">' +
       '<small class="hero-sub">Temporada ' + ANIO + '</small><h2>Hola, ' + h(yo().nombre.split(/\s+/)[0]) + '</h2>' +
       '<p>' + (prox ? 'Próximo partido: ' + h(prox.categoria) + ' vs ' + h(prox.rival) + ' · ' + h(fCorta(prox.fecha)) + ' ' + h(prox.hora) + ' hrs' : 'No hay partidos programados') + '</p></div></div></section>';
+    const mes = new Date().getMonth();
+    const cumples = C.cumpleanosDelMes(S.view, mes, ANIO);
+    const temporada = (S.view.cambiosTemporada || []).filter((x) => x.anio === ANIO && x.cambios.length).pop();
     return hero + '<div class="kpis">' + kpis + '</div>' +
+      (temporada && leerLS('vg_temp_' + ANIO) !== '1' ? '<div class="aviso info fila entre"><span>Nueva temporada ' + ANIO + ': <b>' + temporada.cambios.length + '</b> jugadores subieron de año o de categoría automáticamente.</span><button class="btn mini" data-act="verTemporada">Ver cambios</button></div>' : '') +
       seccion('Lesiones y dolores sin revisar', nuevas.length ? '<ul class="lista">' + nuevas.map(itemLesion).join('') + '</ul>' : vacio('No hay reportes nuevos.'),
         nuevas.length ? btnTexto('Marcar revisado', 'lesionVistoTodo') : '') +
       seccion('Próximo partido', prox ? tarjetaPartido(prox) : vacio('No hay partidos programados.'), btnTexto('Ver todos', 'tab', 'data-tab="partidos"')) +
       (esDir() && informesPendientes().length ? seccion('Pagos informados por revisar', '<ul class="lista">' + informesPendientes().map(itemInforme).join('') + '</ul>', btnTexto('Finanzas', 'tab', 'data-tab="finanzas"')) : '') +
       (esDir() && propuestasConvenio().length ? seccion('Convenios propuestos', '<ul class="lista">' + propuestasConvenio().map(itemPropuesta).join('') + '</ul>', btnTexto('Convenios', 'tab', 'data-tab="convenios"')) : '') +
-      seccion('Esta semana', semana.length ? '<ul class="lista">' + semana.map(itemEntrenamiento).join('') + '</ul>' : vacio('Sin entrenamientos en los próximos 7 días.'), btnTexto('Ver todos', 'tab', 'data-tab="entrenamientos"'));
+      seccion('Esta semana', semana.length ? '<ul class="lista">' + semana.map(itemEntrenamiento).join('') + '</ul>' : vacio('Sin entrenamientos en los próximos 7 días.'), btnTexto('Ver todos', 'tab', 'data-tab="entrenamientos"')) +
+      (cumples.length ? seccion('🎂 Cumpleaños de ' + C.MESES_LARGOS[mes].toLowerCase(), listaCumples(cumples)) : '');
   }
 
   // ---------- Jugadores ----------
@@ -487,10 +577,10 @@
       const les = lesionesActivas(j.rut).length;
       const deuda = esDir() ? C.mesesAdeudados(S.view, j.rut, ANIO).filter((m) => estadoMes(j.rut, ANIO, m) === 'vencido').length : 0;
       const sinFirma = C.documentosPendientes(S.view, j.rut).some((d) => d.id === 'consentimiento');
-      return '<li data-act="verJugador" data-rut="' + j.rut + '">' + camiseta(j) +
+      return '<li data-act="verJugador" data-rut="' + j.rut + '">' + (j.foto ? avatarFoto(j, 'camiseta foto') : camiseta(j)) +
         '<div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(etiqueta(j)) + (j.posicion ? ' · ' + h(j.posicion) : '') + '</small>' +
         '<div class="fila insignias">' + habInsignia(j.rut) + (les ? insignia('Lesión', 'alerta') : '') + (deuda ? insignia(deuda + ' cuota' + (deuda > 1 ? 's' : '') + ' atrasada' + (deuda > 1 ? 's' : ''), 'mal') : '') +
-        (sinFirma ? insignia('Sin consentimiento', 'alerta') : '') + (cuentaEntrenador(j.rut) ? insignia('Entrenador', 'oro') : '') + (j.activo === false ? insignia('Inactivo') : '') + '</div></div>' +
+        (sinFirma ? insignia(menor(j) ? 'Falta firma del apoderado' : 'Sin consentimiento', 'alerta') : '') + (menor(j) && !apoderados(j.rut).length ? insignia('Sin apoderado', 'mal') : '') + (cuentaEntrenador(j.rut) ? insignia('Entrenador', 'oro') : '') + (j.activo === false ? insignia('Inactivo') : '') + '</div></div>' +
         '<span class="chevron">' + icono('flecha') + '</span></li>';
     }).join('');
     return '<div class="filtros"><input type="search" placeholder="Buscar por nombre o RUT" value="' + h(S.busqueda) + '" data-cambio="busqueda">' + filtroCategoria() +
@@ -507,14 +597,16 @@
       '<div class="campos">' +
       campo('Categoría', '<select name="categoria" data-categoria>' + opcionesCategoria(j.categoria) + '</select>') +
       campo('Año en la categoría', '<select name="anioCategoria"><option value="">Elegir…</option><option value="1"' + (j.anioCategoria === '1' ? ' selected' : '') + '>1er año</option><option value="2"' + (j.anioCategoria === '2' ? ' selected' : '') + '>2do año</option></select>', ' id="campo-anio"' + (C.llevaAnio(j.categoria) ? '' : ' hidden')) +
-      campo('Fecha de nacimiento', input('fechaNac', j.fechaNac, 'type="date"')) +
+      campo('Fecha de nacimiento', input('fechaNac', j.fechaNac, 'type="date" required')) +
       campo('N° de camiseta', input('numero', j.numero, 'type="number" min="0" max="99" inputmode="numeric"')) +
       campo('Posición', '<select name="posicion"><option value="">–</option>' + opciones(C.POSICIONES, j.posicion) + '</select>') +
       campo('Teléfono', input('telefono', j.telefono, 'type="tel"')) +
       campo('Email', input('email', j.email, 'type="email"')) +
-      campo('Previsión de salud', input('prevision', j.prevision, 'placeholder="Fonasa, Isapre..."')) +
       (esDir() ? campo('Descuento / beca (%)', input('descuento', j.descuento || 0, 'type="number" min="0" max="100" inputmode="numeric"')) : '') +
-      '</div>' + campo('Contacto de emergencia', input('contactoEmergencia', j.contactoEmergencia, 'placeholder="Nombre y teléfono"')) +
+      '</div>' +
+      (nuevo ? '<p class="sub">Apoderado (obligatorio si es menor de 18)</p><p class="ayuda">Se crea su cuenta: entra con su RUT y los 4 primeros dígitos. La cuenta del menor se habilita cuando el apoderado firma el consentimiento.</p>' +
+        '<div class="campos">' + campo('RUT del apoderado', input('apoderadoRut', '', 'placeholder="12.345.678-9" data-rut')) + campo('Nombre del apoderado', input('apoderadoNombre', '', 'maxlength="80"')) +
+        campo('Teléfono', input('apoderadoTelefono', '', 'type="tel"')) + campo('Email', input('apoderadoEmail', '', 'type="email"')) + '</div>' : '') +
       pie(nuevo ? 'Inscribir jugador' : 'Guardar') + '</form>';
   }
 
@@ -524,11 +616,10 @@
     const les = S.view.lesiones.filter((l) => l.rut === rut).sort((x, y) => y.fecha.localeCompare(x.fecha));
     const docs = (S.view.documentos || []).filter((d) => C.documentoAplica(d, rut));
     const fila = (k, v) => '<li><div class="crece"><small>' + h(k) + '</small></div><div class="valor">' + v + '</div></li>';
-    let html = '<div class="ficha-cab">' + camiseta(j) + '<div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(C.formatearRut(j.rut)) + '</small><small>' + h(etiqueta(j)) + (j.posicion ? ' · ' + h(j.posicion) : '') + '</small></div>' + habInsignia(rut) + '</div>' +
+    let html = '<div class="ficha-cab">' + (j.foto ? avatarFoto(j, 'camiseta foto') : camiseta(j)) + '<div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(C.formatearRut(j.rut)) + '</small><small>' + h(etiqueta(j)) + (j.posicion ? ' · ' + h(j.posicion) : '') + '</small></div>' + habInsignia(rut) + '</div>' +
       '<div class="tarjeta"><ul class="lista">' +
       fila('Edad', C.edad(j.fechaNac) == null ? '–' : C.edad(j.fechaNac) + ' años') +
       fila('Teléfono', h(j.telefono || '–')) + fila('Email', h(j.email || '–')) +
-      fila('Emergencia', h(j.contactoEmergencia || '–')) + fila('Previsión', h(j.prevision || '–')) +
       fila('Asistencia ' + ANIO, a.asistidos + ' de ' + a.realizados + ' (' + a.porcentaje + '%)') +
       fila('Federativo ' + ANIO, C.federativoPagado(S.view, rut, ANIO) ? insignia('Pagado', 'ok') : insignia('Pendiente', 'mal'));
     if (esDir()) {
@@ -538,8 +629,27 @@
     }
     html += docs.map((d) => { const f = C.firmaDe(S.view, rut, d); return fila(d.titulo, f ? insignia('Firmado ' + fCorta(f.fecha), 'ok') : insignia('Pendiente', 'alerta')); }).join('');
     html += '</ul></div>';
+    // Apoderados: obligatorios para menores; su cuenta firma y gestiona por el jugador.
+    const aps = apoderados(rut);
+    html += '<h3 class="sub">Apoderado' + (aps.length > 1 ? 's' : '') + '</h3><div class="tarjeta">' + (aps.length ? '<ul class="lista">' + aps.map((a) => {
+      const wa = telWa(a.telefono);
+      return '<li class="envolver"><div class="crece"><b>' + h(a.nombre) + '</b><small>' + h(C.formatearRut(a.rut)) + (a.telefono ? ' · ' + h(a.telefono) : '') + (a.email ? ' · ' + h(a.email) : '') + '</small>' +
+        '<div class="fila insignias">' + (a.claveInicial ? insignia('Clave inicial') : insignia('Ya entró', 'ok')) + (wa ? '<a class="btn mini" href="https://wa.me/' + wa + '" target="_blank" rel="noopener noreferrer">WhatsApp</a>' : '') +
+        (esDir() ? '<button class="btn mini" data-act="resetClave" data-rut="' + a.rut + '">Restablecer clave</button>' : '') +
+        '<button class="btn mini peligro" data-act="quitarApoderado" data-rut="' + rut + '" data-apoderado="' + a.rut + '">Quitar</button></div></div></li>';
+    }).join('') + '</ul>' : vacio(menor(j) ? 'Es menor de edad y no tiene apoderado: su cuenta no se habilita hasta que el apoderado firme.' : 'Sin apoderado (no es obligatorio para mayores de edad).')) +
+      '<button class="btn ancho" data-act="agregarApoderado" data-rut="' + rut + '">+ Agregar apoderado</button></div>';
+    // Ficha médica: sólo la ve el cuerpo técnico (no la directiva).
+    if (rol() === 'entrenador') html += '<h3 class="sub">Ficha médica</h3><div class="tarjeta">' + vistaFichaMedica(j) + '<button class="btn ancho" data-act="fichaMedica" data-rut="' + rut + '">Editar ficha médica</button></div>';
+    const est = C.estadisticasJugador(S.view, rut, ANIO);
+    if (est.pj) html += '<h3 class="sub">Estadísticas ' + ANIO + '</h3><div class="tarjeta"><div class="fila insignias">' + insignia(est.pj + ' partidos') + insignia(est.g + ' goles', 'ok') + (est.at ? insignia(est.at + ' atajadas') : '') + (est.dm ? insignia(est.dm + ' × 2 min', 'alerta') : '') + (est.am + est.ro + est.az ? insignia((est.am + est.ro + est.az) + ' tarjetas', 'mal') : '') + '</div></div>';
+    const evs = (S.view.evaluaciones || []).filter((e) => e.rut === rut);
+    if (evs.length) html += '<h3 class="sub">Evaluación física</h3><div class="tarjeta">' + bloqueEvaluaciones(evs) + '</div>';
+    const mat = (S.view.prestamos || []).filter((x) => x.rut === rut && !x.devuelto);
+    if (mat.length) html += '<h3 class="sub">Material a su cargo</h3><div class="tarjeta"><ul class="lista">' + mat.map((x) => '<li><div class="crece"><b>' + x.cantidad + ' × ' + h(((S.view.inventario || []).find((i) => i.id === x.itemId) || { nombre: '?' }).nombre) + '</b><small>Desde ' + h(fCorta(x.fecha)) + (x.nota ? ' · ' + h(x.nota) : '') + '</small></div></li>').join('') + '</ul></div>';
     html += '<h3 class="sub">Lesiones y dolores</h3><div class="tarjeta">' + (les.length ? '<ul class="lista">' + les.map(itemLesion).join('') + '</ul>' : vacio('Sin reportes.')) + '</div>';
     html += '<div class="modal-pie columna"><button class="btn primario ancho" data-act="editarJugador" data-rut="' + rut + '">Editar datos</button>' +
+      '<button class="btn ancho" data-act="credencial" data-rut="' + rut + '">' + icono('credencial') + ' Credencial y foto</button>' +
       '<button class="btn ancho" data-act="lesionPara" data-rut="' + rut + '">Registrar lesión o dolor</button>' +
       (esDir() ? '<button class="btn ancho" data-act="resetClave" data-rut="' + rut + '">Restablecer clave (4 dígitos del RUT)</button><button class="btn ancho peligro" data-act="activoJugador" data-rut="' + rut + '" data-activo="' + (j.activo === false ? '1' : '') + '">' + (j.activo === false ? 'Reactivar jugador' : 'Dar de baja') + '</button>' : '') + '</div>';
     return html;
@@ -576,7 +686,8 @@
     const balance = recaudado + fedMonto + ingresos - gastos;
 
     const pend = informesPendientes();
-    return '<div class="filtros">' + segmentado('anioFin', anio, [[ANIO - 1, ANIO - 1], [ANIO, ANIO], [ANIO + 1, ANIO + 1]]) + filtroCategoria() + '</div>' +
+    return '<div class="filtros">' + segmentado('anioFin', anio, [[ANIO - 1, ANIO - 1], [ANIO, ANIO], [ANIO + 1, ANIO + 1]]) + filtroCategoria() +
+      '<button class="btn" data-act="reporte">' + icono('excel') + ' Reporte mensual</button></div>' +
       (pend.length ? seccion('Pagos informados por revisar', '<ul class="lista">' + pend.map(itemInforme).join('') + '</ul>', '', 'Al aprobar, el pago queda registrado automáticamente.') : '') +
       '<div class="kpis">' +
       '<div class="kpi verde"><small>Cuotas recaudadas</small><b>' + clp(recaudado) + '</b><small>de ' + clp(esperado) + ' vencido</small></div>' +
@@ -586,7 +697,7 @@
       '<div class="kpi ' + (balance >= 0 ? 'verde' : 'rojo') + '"><small>Balance ' + anio + '</small><b>' + clp(balance) + '</b></div></div>' +
       seccion('Mensualidades y federativo', js.length ? '<div class="tabla-envoltura"><table class="tabla matriz"><thead><tr><th>Jugador</th><th class="c">Fed</th>' + C.MESES.map((m) => '<th class="c">' + m + '</th>').join('') + '<th class="num">Deuda</th></tr></thead><tbody>' + filas + '</tbody></table></div>' : vacio('No hay jugadores.'),
         btnTexto('Precios', 'tab', 'data-tab="ajustes"'), 'Toca una casilla para registrar o anular un pago. ✓ pagado · ! vencido · vacío por vencer · punto = mes sin cobro. <b>Fed</b> = federativo (habilita para jugar).') +
-      seccionCobros() +
+      seccionCobros() + seccionRecordatorios() +
       seccion('Otros ingresos y gastos', movs.length ? '<ul class="lista">' + movs.map((m) => '<li><div class="crece"><b>' + h(m.concepto) + '</b><small>' + fCorta(m.fecha) + '</small></div><b class="' + (m.tipo === 'gasto' ? 'rojo' : 'verde') + '">' + (m.tipo === 'gasto' ? '−' : '+') + clp(m.monto) + '</b><button class="btn-icono" data-act="borrarMovimiento" data-id="' + m.id + '" aria-label="Eliminar">&times;</button></li>').join('') + '</ul>' : vacio('Sin movimientos este año.'),
         btnTexto('Registrar', 'nuevoMovimiento'));
   }
@@ -652,8 +763,11 @@
     const n = Object.values(e.asistencia || {});
     const resumen = e.asistenciaTomada ? insignia(n.filter((x) => x === 'P').length + '/' + n.length + ' presentes', 'ok') : (e.fecha <= HOY ? insignia('Falta asistencia', 'alerta') : '');
     const mia = e.miAsistencia ? insignia({ P: 'Asististe', A: 'Ausente', J: 'Justificado' }[e.miAsistencia], { P: 'ok', A: 'mal', J: 'alerta' }[e.miAsistencia]) : '';
+    const plan = (e.plan || []).length ? '<button class="btn mini' + (esStaff() ? '' : ' primario') + '" data-act="verPlan" data-id="' + e.id + '">Plan · ' + e.plan.length + ' ejercicios</button>' : '';
     return '<li>' + fechaCaja(e.fecha) + '<div class="crece"><b>' + h(e.tema || 'Entrenamiento') + '</b><small>' + h(e.hora) + ' hrs · ' + h(e.lugar || '') + '</small>' +
-      (esStaff() ? '<small>' + h(cortoCats(e.categorias)) + '</small><div class="fila insignias">' + resumen + '<button class="btn mini" data-act="asistencia" data-id="' + e.id + '">Asistencia</button><button class="btn mini" data-act="editarEntrenamiento" data-id="' + e.id + '">Editar</button></div>' : mia) + '</div></li>';
+      (esStaff() ? '<small>' + h(cortoCats(e.categorias)) + '</small><div class="fila insignias">' + resumen + '<button class="btn mini" data-act="asistencia" data-id="' + e.id + '">Asistencia</button>' +
+        (plan || '<button class="btn mini" data-act="editarPlan" data-id="' + e.id + '">+ Plan</button>') + '<button class="btn mini" data-act="editarEntrenamiento" data-id="' + e.id + '">Editar</button></div>'
+        : (mia || plan ? '<div class="fila insignias">' + mia + plan + '</div>' : '')) + '</div></li>';
   }
 
   function vistaEntrenamientos() {
@@ -741,20 +855,12 @@
   // El PDF se genera con el diálogo de impresión del sistema ("Guardar como PDF").
   function imprimirConvocatoria(m) {
     const lista = nombresConvocados(m);
-    let el = $('#imprimir');
-    if (!el) { el = document.createElement('div'); el.id = 'imprimir'; document.body.appendChild(el); }
-    el.innerHTML = '<div class="pdf"><div class="pdf-cab"><img src="' + ESCUDO + '" alt=""><div><b>VIEUX GAULOIS HANDBALL</b><span>Convocatoria</span></div></div>' +
+    imprimir('<div class="pdf"><div class="pdf-cab"><img src="' + ESCUDO + '" alt=""><div><b>VIEUX GAULOIS HANDBALL</b><span>Convocatoria</span></div></div>' +
       '<h1>' + h(tituloConvocatoria(m)) + '</h1>' +
       lineasConvocatoria(m).map(([e, t]) => '<p class="pdf-linea"><span>' + e + '</span>' + h(t) + '</p>').join('') +
       '<ol class="pdf-lista">' + lista.map((c) => '<li>' + h(c.nombre) + '</li>').join('') + '</ol>' +
       (lineasCuerpoTecnico(m).length ? '<div class="pdf-ct"><b>👥 Cuerpo técnico</b>' + lineasCuerpoTecnico(m).map((t) => '<p>' + h(t) + '</p>').join('') + '</div>' : '') +
-      '<p class="pdf-pie">Confirma tu asistencia en la app del club. Documento generado el ' + h(fLarga(HOY)) + '.</p></div>';
-    const titulo = document.title;
-    document.title = 'Convocatoria ' + m.categoria + ' vs ' + m.rival + ' ' + m.fecha;
-    document.body.classList.add('imprimiendo');
-    const fin = () => { document.body.classList.remove('imprimiendo'); document.title = titulo; window.removeEventListener('afterprint', fin); };
-    window.addEventListener('afterprint', fin);
-    setTimeout(() => { window.print(); }, 60);
+      '<p class="pdf-pie">Confirma tu asistencia en la app del club. Documento generado el ' + h(fLarga(HOY)) + '.</p></div>', 'Convocatoria ' + m.categoria + ' vs ' + m.rival + ' ' + m.fecha);
   }
 
   function tarjetaPartido(m) {
@@ -770,8 +876,10 @@
       '<div class="fila insignias">' +
       (jug && m.miCitacion && m.fecha >= HOY ? '<button class="btn mini primario" data-act="responder" data-id="' + m.id + '" data-r="confirmado">Voy</button><button class="btn mini" data-act="responder" data-id="' + m.id + '" data-r="rechazado">No puedo</button>' : '') +
       ((jug ? m.citadosLista.length : r.total) ? '<button class="btn mini' + (jug ? '' : ' primario') + '" data-act="convocatoria" data-id="' + m.id + '">Convocatoria</button>' : '') +
-      (!jug ? '<button class="btn mini" data-act="citar" data-id="' + m.id + '">Citar</button>' + (m.fecha <= HOY ? '<button class="btn mini" data-act="resultado" data-id="' + m.id + '">Resultado</button>' : '') +
+      (!jug ? '<button class="btn mini" data-act="citar" data-id="' + m.id + '">Citar</button>' + (m.fecha <= HOY ? '<button class="btn mini" data-act="resultado" data-id="' + m.id + '">Resultado y estadísticas</button>' : '') +
         '<button class="btn mini" data-act="editarPartido" data-id="' + m.id + '">Editar</button>' : '') + '</div>' +
+      (jug && m.miEstadistica ? '<p class="nota">Tus números: ' + m.miEstadistica.g + ' goles' + (m.miEstadistica.at ? ', ' + m.miEstadistica.at + ' atajadas' : '') + (m.miEstadistica.dm ? ', ' + m.miEstadistica.dm + ' × 2 min' : '') + '</p>' : '') +
+      (m.comentario ? '<p class="nota">💬 ' + h(m.comentario) + '</p>' : '') +
       (m.notas ? '<p class="nota">' + h(m.notas) + '</p>' : '') + '</div></div>';
   }
 
@@ -814,7 +922,7 @@
       '<div class="tarjeta"><ul class="lista">' + (filas || '<li>' + vacio('No hay jugadores en esta categoría.') + '</li>') + '</ul></div>' +
       '<div class="aviso mal" id="aviso-hab" hidden></div>' +
       '<p class="sub">Cuerpo técnico (opcional)</p><p class="ayuda">Completa sólo los que van; los vacíos no aparecen en la convocatoria.</p>' +
-      '<datalist id="nombres-staff">' + S.view.usuarios.filter((u) => u.rol !== 'jugador' && u.activo !== false).map((u) => '<option value="' + h(u.nombre) + '">').join('') + '</datalist>' +
+      '<datalist id="nombres-staff">' + S.view.usuarios.filter((u) => esPersonal(u) && u.activo !== false).map((u) => '<option value="' + h(u.nombre) + '">').join('') + '</datalist>' +
       '<div class="tarjeta"><div class="campos">' + C.CUERPO_TECNICO.map(([k, etq]) => campo(etq, input('ct_' + k, (m.cuerpoTecnico || {})[k], 'list="nombres-staff" maxlength="60" placeholder="Nombre"'))).join('') + '</div></div>' +
       pie('Guardar convocatoria') + '</form>';
   }
@@ -941,7 +1049,7 @@
       return (prop.length ? seccion('Propuestas por revisar', '<ul class="lista">' + prop.map(itemPropuesta).join('') + '</ul>', '', 'Se publican sólo cuando las apruebas.') : '') +
         seccion('Convenios publicados', lista, '', 'Todo el club ve estos convenios.');
     }
-    const mias = S.view.convenios.filter((c) => c.propuestoPor === S.view.yo && !C.convenioPublicado(c));
+    const mias = S.view.convenios.filter((c) => c.propuestoPor === yoId() && !C.convenioPublicado(c));
     return seccion('Convenios del club', lista) +
       seccion('Mis propuestas', mias.length ? '<ul class="lista">' + mias.map(itemPropuesta).join('') + '</ul>' : vacio('¿Conoces una empresa que pueda dar un beneficio al club? Propónla y la directiva la revisará.'),
         btnTexto('Proponer', 'proponerConvenio'));
@@ -962,7 +1070,7 @@
   // ---------- Ajustes (directiva) ----------
   function vistaAjustes() {
     const cfg = S.view.config;
-    const staff = S.view.usuarios.filter((u) => u.rol !== 'jugador').sort((a, b) => a.rol.localeCompare(b.rol) || a.nombre.localeCompare(b.nombre));
+    const staff = S.view.usuarios.filter(esPersonal).sort((a, b) => a.rol.localeCompare(b.rol) || a.nombre.localeCompare(b.nombre));
     return seccion('Precios de cuotas', '<form data-form="config" class="form-interno"><div class="campos">' + cfg.categoriasBase.map((b) => campo(b + ' (M y F)', '<input name="cuota_' + h(b) + '" type="number" min="0" step="500" inputmode="numeric" value="' + (cfg.cuotas[b] || 0) + '">')).join('') + '</div>' +
       '<div class="campos">' + campo('Monto federativo anual', input('montoFederativo', cfg.montoFederativo, 'type="number" min="0" step="500" inputmode="numeric"')) +
       campo('Día de vencimiento', input('diaVencimiento', cfg.diaVencimiento, 'type="number" min="1" max="28" inputmode="numeric"')) + '</div>' +
@@ -971,6 +1079,7 @@
       seccion('Datos de transferencia', '<form data-form="pagos" class="form-interno">' +
         campo('Cuenta del club', '<textarea name="datosTransferencia" rows="4" placeholder="Nombre, RUT, banco, tipo y N° de cuenta, email">' + h(cfg.datosTransferencia || '') + '</textarea>') +
         '<button class="btn primario ancho">Guardar datos</button></form>', btnTexto('Links y cobros', 'tab', 'data-tab="finanzas"'), 'Los links de pago y qué medio usa cada cobro se configuran en Finanzas.') +
+      seccionAutomaticos() +
       seccion('Citaciones', '<form data-form="citacion" class="form-interno">' +
         campo('💳 Indicaciones por defecto', '<textarea name="indicacionesCitacion" rows="3">' + h(cfg.indicacionesCitacion || '') + '</textarea>') +
         '<button class="btn primario ancho">Guardar</button></form>') +
@@ -983,6 +1092,23 @@
           (u.rut !== S.view.yo ? '<button class="btn mini" data-act="definirClave" data-rut="' + u.rut + '">Clave</button><button class="btn mini peligro" data-act="activoStaff" data-rut="' + u.rut + '" data-activo="' + (u.activo === false ? '1' : '') + '">' + (u.activo === false ? 'Activar' : 'Desactivar') + '</button>' : '') + '</div></div></li>';
       }).join('') + '</ul>', btnTexto('Agregar', 'nuevoStaff')) +
       (S.modo === 'local' ? seccion('Demo', '<button class="btn ancho peligro" data-act="reiniciarDemo">Reiniciar datos de ejemplo</button>', '', 'Borra los cambios hechos en este navegador.') : '');
+  }
+
+  function seccionAutomaticos() {
+    const r = S.view.config.recordatorios || {};
+    const srv = S.view.servidor;
+    const canal = (k, t, ok, sin) => '<label class="celda-chequeo"><input type="checkbox" name="' + k + '" value="1"' + (r[k] ? ' checked' : '') + '><span><b>' + t + '</b><br><small>' + (srv ? (ok ? 'Configurado en el servidor' : sin) : 'Funciona con la app publicada en el servidor') + '</small></span></label>';
+    const log = (S.view.recordatoriosLog || []).slice(-8).reverse();
+    return seccion('Recordatorios automáticos de cuotas', '<form data-form="recordatorios" class="form-interno">' +
+      '<label class="celda-chequeo"><input type="checkbox" name="activo" value="1"' + (r.activo ? ' checked' : '') + '><span><b>Enviar recordatorios automáticos</b></span></label>' +
+      '<div class="campos">' + campo('Días antes del vencimiento', input('diasAntes', r.diasAntes == null ? 3 : r.diasAntes, 'type="number" min="0" max="15" inputmode="numeric"')) + '</div>' +
+      '<label class="celda-chequeo"><input type="checkbox" name="atraso" value="1"' + (r.atraso ? ' checked' : '') + '><span>Avisar también si la cuota sigue impaga después del vencimiento</span></label>' +
+      '<p class="etiqueta">Canales</p><div class="tarjeta lista-chequeo">' + canal('push', 'Notificación en el celular', srv && srv.push, '') +
+      canal('correo', 'Correo electrónico', srv && srv.correo, 'Falta configurar el correo del club (SMTP) en el servidor') +
+      canal('whatsapp', 'WhatsApp', srv && srv.whatsapp, 'Falta conectar WhatsApp Business en el servidor') + '</div>' +
+      '<button class="btn primario ancho" style="margin-top:12px">Guardar</button></form>' +
+      (log.length ? '<p class="etiqueta">Últimos enviados</p><ul class="lista">' + log.map((x) => '<li><div class="crece"><b>' + h(x.nombre) + '</b><small>' + h(fCorta(x.fecha)) + ' · ' + (x.tipo === 'antes' ? 'por vencer' : 'atrasada') + ' · ' + h(C.MESES[x.mes]) + '</small></div><small class="suave">' + h(x.canales.join(', ') || 'sin canal') + '</small></li>').join('') + '</ul>' : ''),
+    '', 'Se envían una vez por cuota, al jugador o, si es menor, a su apoderado. Si el pago ya fue informado, no se envía.');
   }
 
   // ---------- Calendario ----------
@@ -1096,17 +1222,34 @@
     const ent = cuentaEntrenador(j.rut);
     const firmas = (S.view.documentos || []).map((d) => [d, C.firmaDe(S.view, j.rut, d)]).filter((x) => x[1]);
 
+    const mesAct = new Date().getMonth();
+    const venceDia = S.view.config.diaVencimiento;
+    const porVencer = S.view.config.mesesCobro.includes(mesAct) && estadoMes(j.rut, ANIO, mesAct) === 'pendiente' && !informePendiente('cuota', mesAct) && venceDia - new Date().getDate() <= ((S.view.config.recordatorios || {}).diasAntes || 3);
+    const est = S.view.misEstadisticas || {};
+    const evs = S.view.evaluaciones || [];
+    const mat = S.view.miMaterial || [];
+    const cumples = S.view.cumpleanos || [];
+    const claveIni = S.apo ? S.view.apoderado.claveInicial : j.claveInicial;
     return (ent ? '<div class="aviso info">También eres <b>' + h(ent.cargo || 'entrenador') + '</b>. Para tu perfil de entrenador sal y entra con tu usuario <b>' + h(ent.rut.replace('usr:', '')) + '</b>.</div>' : '') +
-      (j.claveInicial ? '<div class="aviso">Estás usando tu clave inicial (4 primeros dígitos del RUT). <button class="btn-texto" data-act="clave">Cámbiala aquí</button></div>' : '') +
-      '<section class="perfil"><div class="perfil-fila"><div class="numero">' + (j.numero != null ? h(j.numero) : '–') + '</div><div class="crece"><h2>' + h(j.nombre) + '</h2>' +
+      (claveIni ? '<div class="aviso">Estás usando tu clave inicial (4 primeros dígitos del RUT). <button class="btn-texto" data-act="clave">Cámbiala aquí</button></div>' : '') +
+      (S.apo ? '<div class="aviso info">Estás viendo el perfil de <b>' + h(j.nombre) + '</b> como su apoderado. Puedes confirmar citaciones, pagar, informar pagos y escribir al club por ' + h(j.nombre.split(/\s+/)[0]) + '.</div>' : '') +
+      '<section class="perfil"><div class="perfil-fila">' + (j.foto ? '<button class="perfil-foto" data-act="credencial" aria-label="Ver credencial"><img src="' + h(fotoUrl(j.foto)) + '" alt=""><span>' + (j.numero != null ? h(j.numero) : '') + '</span></button>' : '<div class="numero">' + (j.numero != null ? h(j.numero) : '–') + '</div>') + '<div class="crece"><h2>' + h(j.nombre) + '</h2>' +
       '<p>' + h(etiqueta(j)) + '</p>' + (fed ? insignia('Habilitado para jugar', 'ok') : insignia('No habilitado · federativo pendiente', 'mal')) + '</div></div>' +
       '<div class="datos"><div><small>Edad</small><b>' + (e == null ? '–' : e + ' años') + '</b></div><div><small>N° camiseta</small><b>' + (j.numero != null ? h(j.numero) : '–') + '</b></div>' +
       '<div><small>Posición</small><b>' + h(j.posicion || '–') + '</b></div><div><small>RUT</small><b>' + h(C.formatearRut(j.rut)) + '</b></div></div>' +
-      '<button class="btn mini claro" data-act="misDatos">Editar mis datos de contacto</button></section>' +
-      (vencidos ? '<div class="aviso mal fila entre"><span>Tienes ' + vencidos + ' cuota' + (vencidos > 1 ? 's' : '') + ' atrasada' + (vencidos > 1 ? 's' : '') + '.</span><button class="btn mini" data-act="tab" data-tab="finanzas">Ver finanzas</button></div>' : '') +
+      '<div class="fila insignias"><button class="btn mini claro" data-act="credencial">' + icono('credencial') + ' Credencial</button>' + (j.foto ? '' : '<button class="btn mini claro" data-act="fotoPerfil" data-rut="' + h(j.rut) + '">' + icono('camara') + ' Agregar foto</button>') +
+      '<button class="btn mini claro" data-act="misDatos">Datos de contacto</button></div></section>' +
+      (porVencer && !vencidos ? '<div class="aviso fila entre"><span>' + (S.apo ? 'La cuota de ' + h(j.nombre.split(/\s+/)[0]) + ' de ' : 'Tu cuota de ') + C.MESES_LARGOS[mesAct].toLowerCase() + ' vence el día ' + venceDia + '.</span><button class="btn mini" data-act="tab" data-tab="finanzas">Pagar</button></div>' : '') +
+      (vencidos ? '<div class="aviso mal fila entre"><span>' + (S.apo ? h(j.nombre.split(/\s+/)[0]) + ' tiene ' : 'Tienes ') + vencidos + ' cuota' + (vencidos > 1 ? 's' : '') + ' atrasada' + (vencidos > 1 ? 's' : '') + '.</span><button class="btn mini" data-act="tab" data-tab="finanzas">Ver finanzas</button></div>' : '') +
 
       seccion('Próximos partidos', misPartidos.length ? '<ul class="lista">' + misPartidos.map((m) => '<li>' + tarjetaPartido(m) + '</li>').join('') + '</ul>' : vacio('No hay partidos próximos para tu categoría.')) +
       seccion('Próximos entrenamientos', misEntr.length ? '<ul class="lista">' + misEntr.map(itemEntrenamiento).join('') + '</ul>' : vacio('Sin entrenamientos programados.'), btnTexto('Calendario', 'tab', 'data-tab="calendario"')) +
+      (est.pj ? seccion('Mis estadísticas ' + ANIO, '<div class="mini-kpis"><div><b>' + est.pj + '</b><small>partidos</small></div><div><b>' + est.g + '</b><small>goles</small></div>' + (est.at ? '<div><b>' + est.at + '</b><small>atajadas</small></div>' : '') +
+        '<div><b>' + est.dm + '</b><small>× 2 min</small></div><div><b>' + (est.am + est.ro + est.az) + '</b><small>tarjetas</small></div></div>', btnTexto('Goleadores', 'tab', 'data-tab="estadisticas"')) : '') +
+      (evs.length ? seccion('Evaluación física', bloqueEvaluaciones(evs), '', 'La registra tu entrenador. Toca un punto para ver la fecha y el valor.') : '') +
+      seccion('Ficha médica', vistaFichaMedica(j), btnTexto('Editar', 'fichaMedica', 'data-rut="' + h(j.rut) + '"'), (S.apo ? 'La ven sólo sus entrenadores y tú.' : 'La ven sólo tus entrenadores.')) +
+      (mat.length ? seccion('Material del club a tu cargo', '<ul class="lista">' + mat.map((x) => '<li><span class="ico-celda c-inventario">' + icono('inventario') + '</span><div class="crece"><b>' + x.cantidad + ' × ' + h(x.nombre) + '</b><small>Desde ' + h(fCorta(x.fecha)) + (x.nota ? ' · ' + h(x.nota) : '') + '</small></div></li>').join('') + '</ul>') : '') +
+      (cumples.length ? seccion('🎂 Cumpleaños de ' + C.MESES_LARGOS[mesAct].toLowerCase() + ' en tu categoría', listaCumples(cumples)) : '') +
       seccion('Lesiones y dolores', les.length ? '<ul class="lista">' + les.map(itemLesion).join('') + '</ul>' : vacio('No tienes lesiones ni dolores reportados.'), btnTexto('Reportar', 'lesionPara'), 'Lo que reportes lo ven tu entrenador y la directiva.') +
       seccion('Asistencia a entrenamientos', '<div class="fila" style="gap:16px"><div class="anillo" style="--p:' + a.porcentaje + '"><b>' + a.porcentaje + '%</b></div><div class="crece">Asististe a <b>' + a.asistidos + '</b> de <b>' + a.realizados + '</b> entrenamientos realizados' + (a.justificados ? '<br><small class="suave">' + a.justificados + ' ausencias justificadas</small>' : '') + '</div></div>') +
       (firmas.length ? seccion('Documentos firmados', '<ul class="lista">' + firmas.map(([d, f]) => '<li><span class="ico-celda c-documentos">' + icono('documentos') + '</span><div class="crece"><b>' + h(d.titulo) + '</b><small>Firmado el ' + h(fCorta(f.fecha)) + '</small></div></li>').join('') + '</ul>') : '');
@@ -1124,8 +1267,8 @@
     return Object.keys(hilos).map((k) => ({ hilo: k, msjs: hilos[k].sort((a, b) => a.fecha.localeCompare(b.fecha)) }))
       .sort((a, b) => (b.msjs.length ? b.msjs[b.msjs.length - 1].fecha : '').localeCompare(a.msjs.length ? a.msjs[a.msjs.length - 1].fecha : ''));
   }
-  const noLeidos = (msjs) => msjs.filter((m) => !m.leidoPor.includes(S.view.yo)).length;
-  const chatSinLeer = () => (S.view.mensajes || []).filter((m) => !m.leidoPor.includes(S.view.yo)).length;
+  const noLeidos = (msjs) => msjs.filter((m) => !m.leidoPor.includes(yoId())).length;
+  const chatSinLeer = () => (S.view.mensajes || []).filter((m) => !m.leidoPor.includes(yoId())).length;
 
   function tituloHilo(hilo) {
     const [tipo, id] = [hilo.slice(0, 3), hilo.slice(4)];
@@ -1149,16 +1292,16 @@
   function vistaChat() {
     if (S.hilo) {
       const msjs = (S.view.mensajes || []).filter((m) => m.hilo === S.hilo).sort((a, b) => a.fecha.localeCompare(b.fecha));
-      if (noLeidos(msjs)) setTimeout(() => { if (S.hilo) B().accion('chat.leer', { hilo: S.hilo }).then((v) => { S.view = v; render(); }).catch(() => {}); }, 300);
+      if (noLeidos(msjs)) setTimeout(() => { if (S.hilo) llamar('chat.leer', { hilo: S.hilo }).then((v) => { recibir(v); render(); }).catch(() => {}); }, 300);
       let ultimoDia = '';
       const burbujas = msjs.map((m) => {
-        const mio = m.de === S.view.yo;
+        const mio = m.de === yoId();
         const autor = usuario(m.de);
         const dia = m.fecha.slice(0, 10);
         const fechaDia = new Date(m.fecha).toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
         const sep = dia !== ultimoDia ? '<div class="chat-dia">' + h(fechaDia.charAt(0).toUpperCase() + fechaDia.slice(1)) + '</div>' : '';
         ultimoDia = dia;
-        return sep + '<div class="burbuja' + (mio ? ' mia' : '') + '">' + (!mio ? '<b>' + h(autor ? autor.nombre : '?') + (autor && autor.rol !== 'jugador' ? ' · ' + h(autor.cargo || autor.rol) : '') + '</b>' : '') +
+        return sep + '<div class="burbuja' + (mio ? ' mia' : '') + '">' + (!mio ? '<b>' + h(autor ? autor.nombre : '?') + (autor && autor.rol === 'apoderado' ? ' · apoderado' : autor && autor.rol !== 'jugador' ? ' · ' + h(autor.cargo || autor.rol) : '') + '</b>' : '') +
           '<p>' + h(m.texto).replace(/\n/g, '<br>') + '</p><small>' + h(horaMsj(m.fecha)) + '</small></div>';
       }).join('');
       return '<p class="intro">' + h(subtituloHilo(S.hilo)) + '</p>' +
@@ -1174,7 +1317,7 @@
       const tit = tituloHilo(hilo);
       const ini = hilo.startsWith('dir:') && !esDir() ? 'VG' : tit.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
       return '<li data-act="abrirHilo" data-hilo="' + h(hilo) + '"><span class="avatar-chat' + (hilo.startsWith('dir:') ? ' dir' : '') + '">' + h(ini) + '</span><div class="crece"><b>' + h(tit) + '</b>' +
-        '<small>' + (ult ? (ult.de === S.view.yo ? 'Tú: ' : '') + h(ult.texto.slice(0, 80)) : h(subtituloHilo(hilo))) + '</small></div>' +
+        '<small>' + (ult ? (ult.de === yoId() ? 'Tú: ' : '') + h(ult.texto.slice(0, 80)) : h(subtituloHilo(hilo))) + '</small></div>' +
         '<div class="chat-meta">' + (ult ? '<small>' + h(horaMsj(ult.fecha)) + '</small>' : '') + (n ? '<i class="punto">' + n + '</i>' : '') + '</div></li>';
     }).join('') + '</ul>' : vacio('Aún no hay conversaciones.'));
   }
@@ -1188,12 +1331,10 @@
     return '<form id="form-modal">' + campo('¿Con quién?', '<select name="hilo" required>' + ops + '</select>') + pie('Abrir conversación') + '</form>';
   }
 
-  function formMisDatos(j) {
+  function formMisDatos(j, propio) {
     return '<form id="form-modal"><input type="hidden" name="rut" value="' + j.rut + '">' +
       campo('Teléfono', input('telefono', j.telefono, 'type="tel"')) + campo('Email', input('email', j.email, 'type="email"')) +
-      campo('Contacto de emergencia', input('contactoEmergencia', j.contactoEmergencia, 'placeholder="Nombre y teléfono"')) +
-      campo('Previsión de salud', input('prevision', j.prevision)) +
-      '<p class="ayuda">Nombre, categoría y número de camiseta los actualiza el entrenador o la directiva.</p>' + pie() + '</form>';
+      '<p class="ayuda">' + (propio ? 'Los usamos para avisarte de cuotas y citaciones.' : 'Nombre, categoría y número de camiseta los actualiza el entrenador o la directiva. El contacto de emergencia va en la ficha médica.') + '</p>' + pie() + '</form>';
   }
 
   // ---------- Pizarra táctica y jugadas ----------
@@ -1416,23 +1557,499 @@
     S.piz = { pasos: C.clone(j.pasos), i: 0, herr: 'mover', cancha: j.cancha || 'media', jugadaId: j.id, nombre: j.nombre, descripcion: j.descripcion || '', categorias: (j.categorias || []).slice(), historial: [], soloVer, cambios: false };
   }
 
+  // ---------- Fotos ----------
+  // Se comprimen en el navegador antes de subirlas (el servidor guarda máximo 3 por álbum).
+  async function comprimir(archivo, maxLado, maxKB, cuadrado) {
+    const url = URL.createObjectURL(archivo);
+    try {
+      const img = await new Promise((ok, mal) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => mal(new Error('No se pudo leer la imagen')); i.src = url; });
+      let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+      if (cuadrado) { const m = Math.min(sw, sh); sx = (sw - m) / 2; sy = (sh - m) / 2; sw = sh = m; }
+      const esc = Math.min(1, maxLado / Math.max(sw, sh));
+      const c = document.createElement('canvas');
+      c.width = Math.round(sw * esc); c.height = Math.round(sh * esc);
+      c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+      for (let q = 0.85; q >= 0.35; q -= 0.1) {
+        const d = c.toDataURL('image/jpeg', q);
+        if ((d.length - 23) * 0.75 <= maxKB * 1024) return d;
+      }
+      throw new Error('La foto es demasiado pesada');
+    } finally { URL.revokeObjectURL(url); }
+  }
+
+  function elegirArchivos(multiple) {
+    return new Promise((ok) => {
+      const i = document.createElement('input');
+      i.type = 'file'; i.accept = 'image/*'; i.multiple = !!multiple;
+      i.addEventListener('change', () => ok(Array.from(i.files || [])));
+      i.click();
+    });
+  }
+
+  const iniciales = (n) => String(n || '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+  const avatarFoto = (u, clase) => (u.foto ? '<img class="' + (clase || 'foto-mini') + '" src="' + h(fotoUrl(u.foto)) + '" alt="">' : '<span class="' + (clase || 'foto-mini') + ' sin-foto">' + h(iniciales(u.nombre)) + '</span>');
+
+  // ---------- Credencial digital ----------
+  function vistaCredencial(j) {
+    const vencidas = S.view.config.mesesCobro.filter((m) => estadoMes(j.rut, ANIO, m) === 'vencido').length;
+    return '<div class="credencial">' +
+      '<div class="cred-cab"><img src="' + ESCUDO + '" alt=""><div class="crece"><b>VIEUX GAULOIS</b><small>Handball Club</small></div><span>Temporada ' + ANIO + '</span></div><div class="franja" aria-hidden="true"><i></i><i></i><i></i></div>' +
+      '<div class="cred-cuerpo">' + avatarFoto(j, 'cred-foto') + '<div class="crece"><h3>' + h(j.nombre) + '</h3>' +
+      '<p><small>RUT</small><b>' + h(C.formatearRut(j.rut)) + '</b></p><p><small>Categoría</small><b>' + h(etiqueta(j)) + '</b></p>' +
+      (j.numero != null ? '<p><small>N° camiseta</small><b>' + h(j.numero) + '</b></p>' : '') + '</div></div>' +
+      '<div class="cred-pie">' + insignia('Jugador activo', 'ok') + (vencidas ? insignia(vencidas + ' cuota' + (vencidas > 1 ? 's' : '') + ' pendiente' + (vencidas > 1 ? 's' : ''), 'mal') : insignia('Cuotas al día', 'ok')) +
+      '<span class="reloj" data-reloj>' + h(relojTexto()) + '</span></div></div>' +
+      '<p class="ayuda">Muéstrala en los convenios del club. La fecha y hora corren en vivo: así se nota que no es una captura de pantalla.</p>' +
+      '<div class="modal-pie columna"><button class="btn ancho" data-act="fotoPerfil" data-rut="' + h(j.rut) + '">' + icono('camara') + (j.foto ? ' Cambiar foto' : ' Agregar foto') + '</button></div>';
+  }
+  const relojTexto = () => new Date().toLocaleString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  setInterval(() => { document.querySelectorAll('[data-reloj]').forEach((e) => { e.textContent = relojTexto(); }); }, 1000);
+
+  // ---------- Ficha médica (cuerpo técnico, el jugador y su apoderado) ----------
+  const CAMPOS_MEDICA = [['sangre', 'Grupo sanguíneo'], ['alergias', 'Alergias'], ['condiciones', 'Enfermedades o condiciones'], ['medicamentos', 'Medicamentos'],
+    ['prevision', 'Previsión de salud'], ['seguro', 'Seguro'], ['emergencia', 'Contacto de emergencia'], ['obs', 'Observaciones']];
+
+  function vistaFichaMedica(j) {
+    const m = j.medica || {};
+    const llenos = CAMPOS_MEDICA.filter(([k]) => m[k]);
+    return (llenos.length ? '<ul class="lista">' + llenos.map(([k, t]) => '<li><div class="crece"><small>' + h(t) + '</small><b>' + h(m[k]) + '</b></div></li>').join('') + '</ul>'
+      : vacio('Sin datos médicos registrados.')) + (m.actualizada ? '<p class="seccion-pie">Actualizada el ' + h(fCorta(m.actualizada)) + '.</p>' : '');
+  }
+
+  function formFichaMedica(j) {
+    const m = j.medica || {};
+    return '<form id="form-modal"><input type="hidden" name="rut" value="' + h(j.rut) + '"><p class="ayuda">La ven sólo los entrenadores' + (S.apo ? ', tú y ' + h(j.nombre.split(/\s+/)[0]) : ' y tú') + '. Sirve para actuar rápido ante una emergencia.</p>' +
+      '<div class="campos">' + campo('Grupo sanguíneo', '<select name="sangre"><option value="">No sé</option>' + opciones(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'], m.sangre) + '</select>') +
+      campo('Previsión de salud', input('prevision', m.prevision, 'placeholder="Fonasa, Isapre..." maxlength="60"')) + '</div>' +
+      campo('Alergias', input('alergias', m.alergias, 'placeholder="Medicamentos, alimentos... o Ninguna" maxlength="200"')) +
+      campo('Enfermedades o condiciones', input('condiciones', m.condiciones, 'placeholder="Asma, diabetes, epilepsia..." maxlength="200"')) +
+      campo('Medicamentos que toma', input('medicamentos', m.medicamentos, 'maxlength="200"')) +
+      campo('Seguro', input('seguro', m.seguro, 'placeholder="Seguro escolar, deportivo, clínica..." maxlength="100"')) +
+      campo('Contacto de emergencia', input('emergencia', m.emergencia, 'placeholder="Nombre, parentesco y teléfono" maxlength="120"')) +
+      campo('Observaciones', '<textarea name="obs" maxlength="300">' + h(m.obs || '') + '</textarea>') + pie('Guardar ficha médica') + '</form>';
+  }
+
+  // ---------- Estadísticas ----------
+  const CORTO_EST = { g: 'Goles', at: 'Ataj.', dm: '2 min', am: 'Amarilla', ro: 'Roja', az: 'Azul' };
+
+  function tablaEstadisticas(filas, conPromedio) {
+    if (!filas.length) return vacio('Aún no hay estadísticas registradas.');
+    return '<div class="tabla-envoltura"><table class="tabla est"><thead><tr><th class="c">#</th><th>Jugador</th><th class="num">PJ</th><th class="num">Goles</th>' + (conPromedio ? '<th class="num">Prom.</th>' : '') +
+      '<th class="num">Ataj.</th><th class="num">2 min</th><th class="num" title="Amarillas">TA</th><th class="num" title="Rojas">TR</th><th class="num" title="Azules">TAz</th></tr></thead><tbody>' +
+      filas.map((x, i) => '<tr class="' + (x.esYo ? 'yo' : '') + '"><td class="c">' + (i + 1) + '</td><td>' + (x.numero != null ? '<small class="suave">' + h(x.numero) + '</small> ' : '') + h(x.nombre) + '</td><td class="num">' + x.pj + '</td><td class="num"><b>' + x.g + '</b></td>' +
+        (conPromedio ? '<td class="num">' + (x.pj ? (x.g / x.pj).toFixed(1).replace('.', ',') : '–') + '</td>' : '') + '<td class="num">' + x.at + '</td><td class="num">' + x.dm + '</td><td class="num">' + x.am + '</td><td class="num">' + x.ro + '</td><td class="num">' + x.az + '</td></tr>').join('') +
+      '</tbody></table></div>';
+  }
+
+  function itemResultado(m) {
+    const r = m.resultado;
+    const est = r ? (r.nuestro > r.rival ? ['Victoria', 'ok'] : r.nuestro < r.rival ? ['Derrota', 'mal'] : ['Empate', '']) : null;
+    const mia = m.miEstadistica;
+    return '<li>' + fechaCaja(m.fecha, true) + '<div class="crece"><b>vs ' + h(m.rival) + '</b><small>' + h(m.categoria) + (m.competicion ? ' · ' + h(m.competicion) : '') + '</small>' +
+      '<div class="fila insignias">' + (r ? '<b class="marcador">' + r.nuestro + ' – ' + r.rival + '</b>' + insignia(est[0], est[1]) : insignia('Sin resultado')) +
+      (mia ? insignia('Tus goles: ' + mia.g + (mia.at ? ' · atajadas: ' + mia.at : ''), 'azul') : '') +
+      (esStaff() ? '<button class="btn mini" data-act="resultado" data-id="' + m.id + '">' + (m.estadisticas && Object.keys(m.estadisticas).length ? 'Editar estadísticas' : 'Cargar estadísticas') + '</button>' : '') + '</div>' +
+      (m.comentario ? '<p class="nota">💬 ' + h(m.comentario) + '</p>' : '') + '</div></li>';
+  }
+
+  function vistaEstadisticas() {
+    if (!esStaff()) {
+      const me = S.view.misEstadisticas || {};
+      const jugados = pasados(S.view.partidos).filter((m) => m.resultado || m.comentario).slice(0, 15);
+      return '<div class="kpis"><div class="kpi"><small>Partidos jugados</small><b>' + (me.pj || 0) + '</b></div><div class="kpi verde"><small>Goles</small><b>' + (me.g || 0) + '</b></div>' +
+        '<div class="kpi"><small>Atajadas</small><b>' + (me.at || 0) + '</b></div><div class="kpi oro"><small>Exclusiones 2 min</small><b>' + (me.dm || 0) + '</b></div>' +
+        '<div class="kpi rojo"><small>Tarjetas</small><b>' + ((me.am || 0) + (me.ro || 0) + (me.az || 0)) + '</b></div></div>' +
+        seccion('Goleadores · ' + yo().categoria + ' ' + ANIO, tablaEstadisticas(S.view.goleadores || [], true), '', 'Tu fila aparece destacada.') +
+        seccion('Resultados', jugados.length ? '<ul class="lista">' + jugados.map(itemResultado).join('') + '</ul>' : vacio('Aún no hay partidos jugados.'));
+    }
+    const conDatos = cats().filter((c) => S.view.partidos.some((m) => m.categoria === c && m.estadisticas && Object.keys(m.estadisticas).length));
+    const cat = S.catEst || S.filtroCat || conDatos[0] || cats()[0];
+    const jugados = pasados(S.view.partidos).filter((m) => m.categoria === cat).slice(0, 20);
+    return '<div class="filtros"><select data-cambio="catEst" aria-label="Categoría">' + opcionesCategoria(cat) + '</select></div>' +
+      seccion('Goleadores ' + ANIO, tablaEstadisticas(C.tablaGoleadores(S.view, cat, ANIO), true), '', 'Se suman las estadísticas que cargas en cada partido (botón "Resultado").') +
+      seccion('Partidos jugados', jugados.length ? '<ul class="lista">' + jugados.map(itemResultado).join('') + '</ul>' : vacio('Esta categoría aún no juega partidos.'));
+  }
+
+  function formResultado(m) {
+    const ruts = Array.from(new Set(Object.keys(m.citados || {}).concat(Object.keys(m.estadisticas || {}))));
+    const lista = (ruts.length ? ruts.map(usuario).filter(Boolean) : jugadores().filter((j) => j.categoria === m.categoria))
+      .sort((a, b) => (a.numero == null ? 999 : a.numero) - (b.numero == null ? 999 : b.numero) || a.nombre.localeCompare(b.nombre));
+    const hay = m.estadisticas && Object.keys(m.estadisticas).length;
+    const filas = lista.map((j) => {
+      const e = (m.estadisticas || {})[j.rut] || {};
+      const jugo = hay ? !!m.estadisticas[j.rut] : (m.citados || {})[j.rut] !== 'rechazado';
+      return '<div class="est-fila"><label class="est-jugo"><input type="checkbox" name="jugo[]" value="' + h(j.rut) + '"' + (jugo ? ' checked' : '') + '><span><b>' + (j.numero != null ? '#' + h(j.numero) + ' ' : '') + h(j.nombre) + '</b><small>Jugó</small></span></label>' +
+        '<div class="est-campos">' + C.CAMPOS_ESTADISTICA.map(([k, , max]) => '<label><span>' + CORTO_EST[k] + '</span><input name="e_' + h(j.rut) + '_' + k + '" type="number" min="0" max="' + max + '" inputmode="numeric" value="' + (e[k] || '') + '" placeholder="0"></label>').join('') + '</div></div>';
+    }).join('');
+    return '<form id="form-modal"><input type="hidden" name="id" value="' + m.id + '">' +
+      '<div class="campos">' + campo('Vieux Gaulois', input('nuestro', m.resultado ? m.resultado.nuestro : '', 'type="number" min="0" inputmode="numeric"')) +
+      campo(m.rival, input('rival', m.resultado ? m.resultado.rival : '', 'type="number" min="0" inputmode="numeric"')) + '</div>' +
+      campo('Comentario del entrenador', '<textarea name="comentario" maxlength="600" placeholder="Lo mejor del partido, qué corregir...">' + h(m.comentario || '') + '</textarea>') +
+      '<p class="sub">Estadísticas por jugador</p><p class="ayuda">Marca quién jugó. Vacío cuenta como 0. Las tarjetas son 0 o 1 y los 2 minutos, de 0 a 3.</p>' +
+      (filas ? '<div class="tarjeta est-lista">' + filas + '</div>' : vacio('No hay jugadores citados.')) + pie('Guardar resultado') + '</form>';
+  }
+
+  // ---------- Evaluación física ----------
+  const TEST = (k) => C.TESTS_FISICOS.find((t) => t[0] === k);
+  const TEST_CORTO = { t5105: '5-10-5 (s)', salto: 'Salto (cm)', flex: 'Flexiones 30 s', sent: 'Sentadillas 30 s', altura: 'Altura (cm)', peso: 'Peso (kg)' };
+  // Categoría por defecto: la elegida, o la de la última evaluación registrada.
+  const catEvaluada = () => {
+    const u = (S.view.evaluaciones || []).slice().sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
+    const j = u && usuario(u.rut);
+    return S.catFis || S.filtroCat || (j && j.categoria) || (jugadores()[0] || {}).categoria || cats()[0];
+  };
+  const numTxt = (v) => String(v).replace('.', ',');
+
+  // Un gráfico pequeño por test (una sola serie: no lleva leyenda; el título la nombra).
+  function graficoTest(evals, k) {
+    const [, nombre, unidad, mejor] = TEST(k);
+    const pts = evals.filter((e) => e.valores && e.valores[k] != null).sort((a, b) => a.fecha.localeCompare(b.fecha)).map((e) => ({ f: e.fecha, v: e.valores[k] }));
+    if (!pts.length) return '';
+    const W = 300, H = 104, L = 10, R = 10, T = 16, B = 20;
+    let min = Math.min.apply(null, pts.map((p) => p.v)), max = Math.max.apply(null, pts.map((p) => p.v));
+    if (min === max) { min -= 1; max += 1; }
+    const m = (max - min) * 0.18; min -= m; max += m;
+    const x = (i) => (pts.length === 1 ? W / 2 : L + i * (W - L - R) / (pts.length - 1));
+    const y = (v) => T + (max - v) / (max - min) * (H - T - B);
+    const linea = pts.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ');
+    const ult = pts[pts.length - 1], ant = pts[pts.length - 2];
+    const d = ant ? Math.round((ult.v - ant.v) * 100) / 100 : null;
+    const bien = d == null || !d || !mejor ? null : mejor === 'menos' ? d < 0 : d > 0;
+    const cambio = d == null ? '' : d === 0 ? '<small class="suave">igual que la anterior</small>'
+      : bien == null ? '<small class="suave">' + (d > 0 ? '▲ +' : '▼ ') + numTxt(d) + ' ' + unidad + '</small>'
+        : insignia((bien ? '▲ Mejoró ' : '▼ Bajó ') + numTxt(Math.abs(d)) + ' ' + unidad, bien ? 'ok' : 'mal');
+    return '<figure class="graf"><figcaption><span>' + h(nombre) + (mejor === 'menos' ? ' <small class="suave">(menos es mejor)</small>' : '') + '</span><b>' + numTxt(ult.v) + ' <small>' + h(unidad) + '</small></b>' + cambio + '</figcaption>' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Evolución de ' + h(nombre) + '">' +
+      '<line class="g-base" x1="' + L + '" x2="' + (W - R) + '" y1="' + (H - B) + '" y2="' + (H - B) + '"/>' +
+      (pts.length > 1 ? '<path class="g-linea" d="' + linea + '"/>' : '') +
+      pts.map((p, i) => '<g class="g-punto"><circle class="g-hit" cx="' + x(i).toFixed(1) + '" cy="' + y(p.v).toFixed(1) + '" r="12"/><circle class="g-marca" cx="' + x(i).toFixed(1) + '" cy="' + y(p.v).toFixed(1) + '" r="4.5"/>' +
+        '<title>' + h(fCorta(p.f)) + ': ' + numTxt(p.v) + ' ' + h(unidad) + '</title></g>').join('') +
+      '<text class="g-eje" x="' + L + '" y="' + (H - 5) + '">' + h(fCorta(pts[0].f)) + '</text>' +
+      (pts.length > 1 ? '<text class="g-eje" text-anchor="end" x="' + (W - R) + '" y="' + (H - 5) + '">' + h(fCorta(ult.f)) + '</text>' : '') +
+      '</svg></figure>';
+  }
+
+  function bloqueEvaluaciones(evals, borrar) {
+    if (!evals.length) return vacio('Aún no hay evaluaciones físicas.');
+    const orden = evals.slice().sort((a, b) => b.fecha.localeCompare(a.fecha));
+    return '<div class="grafs">' + C.TESTS_FISICOS.map(([k]) => graficoTest(evals, k)).join('') + '</div>' +
+      '<details class="tabla-detalle"><summary>Ver todas las mediciones</summary><div class="tabla-envoltura"><table class="tabla"><thead><tr><th>Fecha</th>' +
+      C.TESTS_FISICOS.map(([, n, u]) => '<th class="num">' + h(n) + ' (' + h(u) + ')</th>').join('') + (borrar ? '<th></th>' : '') + '</tr></thead><tbody>' +
+      orden.map((e) => '<tr><td>' + h(fCorta(e.fecha)) + '</td>' + C.TESTS_FISICOS.map(([k]) => '<td class="num">' + (e.valores[k] != null ? numTxt(e.valores[k]) : '–') + '</td>').join('') +
+        (borrar ? '<td><button class="btn-icono" data-act="borrarEvaluacion" data-id="' + e.id + '" aria-label="Eliminar">&times;</button></td>' : '') + '</tr>').join('') +
+      '</tbody></table></div></details>';
+  }
+
+  function vistaFisico() {
+    const cat = catEvaluada();
+    const js = jugadores().filter((j) => j.categoria === cat);
+    const evs = S.view.evaluaciones || [];
+    const filas = js.map((j) => {
+      const mias = evs.filter((e) => e.rut === j.rut).sort((a, b) => b.fecha.localeCompare(a.fecha));
+      const u = mias[0];
+      return '<li data-act="verEvolucion" data-rut="' + j.rut + '">' + camiseta(j) + '<div class="crece"><b>' + h(j.nombre) + '</b>' +
+        (u ? '<small>Última: ' + h(fCorta(u.fecha)) + ' · ' + mias.length + ' evaluacion' + (mias.length > 1 ? 'es' : '') + '</small><div class="fila insignias">' +
+          ['t5105', 'salto', 'flex', 'sent'].filter((k) => u.valores[k] != null).map((k) => insignia(TEST(k)[1].replace(' en 30 s', '') + ': ' + numTxt(u.valores[k]) + ' ' + TEST(k)[2])).join('') + '</div>'
+          : '<small>Sin evaluaciones</small>') + '</div><span class="chevron">' + icono('flecha') + '</span></li>';
+    }).join('');
+    return '<div class="filtros"><select data-cambio="catFis" aria-label="Categoría">' + opcionesCategoria(cat) + '</select><button class="btn" data-act="nuevaEvaluacion" data-cat="' + h(cat) + '">Registrar tests</button></div>' +
+      '<p class="intro">Tests recomendados: <b>5-10-5</b> (segundos), <b>salto alto</b> (cm), <b>flexiones</b> y <b>sentadillas en 30 segundos</b>, más <b>altura</b> y <b>peso</b>. Cada jugador ve su evolución en su perfil.</p>' +
+      seccion(js.length + ' jugador' + (js.length === 1 ? '' : 'es'), js.length ? '<ul class="lista clic">' + filas + '</ul>' : vacio('No hay jugadores en esta categoría.'));
+  }
+
+  function formEvaluacion(cat, fecha) {
+    const js = jugadores().filter((j) => j.categoria === cat);
+    const evs = S.view.evaluaciones || [];
+    return '<form id="form-modal"><div class="campos">' + campo('Categoría', '<select name="cat" data-eval-cat>' + opcionesCategoria(cat) + '</select>') + campo('Fecha', input('fecha', fecha, 'type="date" required')) + '</div>' +
+      '<p class="ayuda">Deja en blanco lo que no se midió. Usa coma o punto para decimales (5-10-5 en segundos, ej. 5,4).</p>' +
+      (js.length ? '<div class="tarjeta est-lista">' + js.map((j) => {
+        const ant = evs.filter((e) => e.rut === j.rut && e.fecha !== fecha).sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
+        const hoyE = evs.find((e) => e.rut === j.rut && e.fecha === fecha);
+        return '<div class="est-fila"><b class="eval-nombre">' + (j.numero != null ? '#' + h(j.numero) + ' ' : '') + h(j.nombre) + '</b><div class="est-campos">' +
+          C.TESTS_FISICOS.map(([k]) => '<label><span>' + TEST_CORTO[k] + '</span><input name="v_' + h(j.rut) + '_' + k + '" inputmode="decimal" value="' + (hoyE && hoyE.valores[k] != null ? numTxt(hoyE.valores[k]) : '') + '" placeholder="' + (ant && ant.valores[k] != null ? numTxt(ant.valores[k]) : '') + '"></label>').join('') + '</div></div>';
+      }).join('') + '</div>' : vacio('No hay jugadores en esta categoría.')) + pie('Guardar evaluación') + '</form>';
+  }
+
+  // ---------- Plan de entrenamiento ----------
+  const filaPlan = (x, jugadas) => '<div class="plan-fila tarjeta"><div class="campos">' + campo('Ejercicio', '<input name="pn[]" value="' + h(x.nombre || '') + '" maxlength="80" placeholder="Ej: Calentamiento con balón">') +
+    campo('Minutos', '<input name="pm[]" type="number" min="0" max="300" inputmode="numeric" value="' + h(x.minutos || '') + '">') + '</div>' +
+    campo('Detalle', '<input name="pd[]" value="' + h(x.detalle || '') + '" maxlength="300" placeholder="Series, reglas, objetivo">') +
+    campo('Jugada de la pizarra (opcional)', '<select name="pj[]"><option value="">Ninguna</option>' + jugadas.map((jg) => '<option value="' + jg.id + '"' + (jg.id === x.jugada ? ' selected' : '') + '>' + h(jg.nombre) + '</option>').join('') + '</select>') + '</div>';
+
+  function formPlan(e) {
+    const jugadas = S.view.jugadas || [];
+    const plan = (e.plan || []).concat([{}, {}]);
+    return '<form id="form-modal"><input type="hidden" name="id" value="' + e.id + '"><p class="ayuda">' + h(fLarga(e.fecha)) + ' · ' + h(e.hora) + ' hrs · ' + h(e.tema || 'Entrenamiento') + '</p>' +
+      '<div id="plan-filas">' + plan.map((x) => filaPlan(x, jugadas)).join('') + '</div>' +
+      '<button type="button" class="btn ancho" data-act="agregarFilaPlan">+ Agregar ejercicio</button>' +
+      '<label class="celda-chequeo"><input type="checkbox" name="planVisible" value="1"' + (e.planVisible ? ' checked' : '') + '><span>Los jugadores pueden ver este plan</span></label>' +
+      pie('Guardar plan') + '</form>';
+  }
+
+  function verPlan(e) {
+    const plan = e.plan || [];
+    const total = plan.reduce((s, x) => s + (Number(x.minutos) || 0), 0);
+    return '<p class="ayuda">' + h(fLarga(e.fecha)) + ' · ' + h(e.hora) + ' hrs · ' + total + ' min en total</p><div class="tarjeta"><ol class="plan-lista">' + plan.map((x) => '<li><div class="fila entre"><b>' + h(x.nombre) + '</b>' + (x.minutos ? insignia(x.minutos + ' min') : '') + '</div>' +
+      (x.detalle ? '<p>' + h(x.detalle) + '</p>' : '') + (x.jugada && (S.view.jugadas || []).some((j) => j.id === x.jugada) ? '<button class="btn mini" data-act="abrirJugadaPlan" data-id="' + x.jugada + '">' + icono('jugadas') + ' Ver jugada</button>' : '') + '</li>').join('') + '</ol></div>' +
+      (esStaff() ? '<div class="modal-pie columna"><button class="btn primario ancho" data-act="editarPlan" data-id="' + e.id + '">Editar plan</button></div>' : '');
+  }
+
+  // ---------- Encuestas ----------
+  const encuestasPorVotar = () => (S.view.encuestas || []).filter((e) => !e.cerrada && e.miVoto == null);
+
+  function tarjetaEncuesta(e) {
+    const cambiar = S.cambiarVoto === e.id;
+    const verRes = esStaff() || (e.miVoto != null && !cambiar) || e.cerrada;
+    const autor = usuario(e.autor);
+    const puede = esDir() || e.autor === S.view.yo;
+    const cuerpo = verRes ? e.opciones.map((o, i) => {
+      const pct = e.total ? Math.round(e.conteo[i] / e.total * 100) : 0;
+      return '<div class="enc-op' + (e.miVoto === i ? ' mia' : '') + '"><div class="fila entre"><span>' + h(o) + (e.miVoto === i ? ' <small>(tu voto)</small>' : '') + '</span><b>' + pct + '%</b></div>' +
+        '<div class="enc-barra"><i style="width:' + pct + '%"></i></div><small class="suave">' + e.conteo[i] + ' voto' + (e.conteo[i] === 1 ? '' : 's') + '</small></div>';
+    }).join('') : '<div class="enc-votar">' + e.opciones.map((o, i) => '<button class="btn ancho' + (e.miVoto === i ? ' primario' : '') + '" data-act="votar" data-id="' + e.id + '" data-op="' + i + '">' + h(o) + '</button>').join('') + '</div>';
+    return '<article class="tarjeta encuesta"><div class="fila insignias">' + insignia(e.categoria || 'Todo el club', e.categoria ? '' : 'azul') +
+      (e.cerrada ? insignia('Cerrada') : e.cierre ? insignia('Cierra el ' + fCorta(e.cierre), 'oro') : '') + '</div><h3>' + h(e.pregunta) + '</h3>' + cuerpo +
+      '<div class="fila insignias" style="margin-top:8px"><small class="suave">' + (esStaff() ? e.total + ' de ' + e.habilitados + ' votaron' : e.total + ' voto' + (e.total === 1 ? '' : 's')) + (autor ? ' · ' + h(autor.nombre) : '') + '</small>' +
+      (!esStaff() && !e.cerrada && e.miVoto != null && !cambiar ? '<button class="btn mini" data-act="cambiarVoto" data-id="' + e.id + '">Cambiar voto</button>' : '') +
+      (esStaff() && puede ? (!e.cerrada ? '<button class="btn mini" data-act="cerrarEncuesta" data-id="' + e.id + '">Cerrar</button>' : '') + '<button class="btn mini peligro" data-act="borrarEncuesta" data-id="' + e.id + '">Eliminar</button>' : '') + '</div></article>';
+  }
+
+  function vistaEncuestas() {
+    const lista = (S.view.encuestas || []).filter((e) => !esStaff() || !S.filtroCat || !e.categoria || e.categoria === S.filtroCat)
+      .sort((a, b) => (a.cerrada ? 1 : 0) - (b.cerrada ? 1 : 0) || b.fecha.localeCompare(a.fecha));
+    return (esStaff() ? '<div class="filtros">' + filtroCategoria() + '</div>' : '') +
+      '<p class="intro">' + (esStaff() ? 'Pregunta al club o a una categoría. Los votos son anónimos: se ven sólo los totales.' : 'Vota en las encuestas del club. Los votos son anónimos.') + '</p>' +
+      (lista.length ? '<div class="pila-avisos">' + lista.map(tarjetaEncuesta).join('') + '</div>' : seccion('', vacio('No hay encuestas.')));
+  }
+
+  function formEncuesta() {
+    return '<form id="form-modal">' + campo('Pregunta', input('pregunta', '', 'required maxlength="160" placeholder="Ej: ¿Qué día hacemos el entrenamiento extra?"')) +
+      campo('Opciones (una por línea)', '<textarea name="opciones" rows="4" required placeholder="Lunes&#10;Miércoles&#10;Sábado"></textarea>') +
+      '<div class="campos">' + campo('¿Quiénes votan?', '<select name="categoria">' + opcionesCategoria(S.filtroCat, 'Todo el club') + '</select>') +
+      campo('Cierra el (opcional)', input('cierre', C.sumarDias(HOY, 7), 'type="date"')) + '</div>' + pie('Publicar encuesta') + '</form>';
+  }
+
+  // ---------- Galería ----------
+  function vistaGaleria() {
+    const lista = (S.view.galeria || []).filter((a) => !esStaff() || !S.filtroCat || !a.categoria || a.categoria === S.filtroCat).sort((a, b) => b.fecha.localeCompare(a.fecha));
+    const TIPOS = { plantel: 'Foto de plantel', partido: 'Partido', evento: 'Evento' };
+    return (esStaff() ? '<div class="filtros">' + filtroCategoria() + '</div>' : '') +
+      '<p class="intro">Fotos del plantel y de los partidos. Las suben los entrenadores, máximo ' + C.MAX_FOTOS_ALBUM + ' por álbum.</p>' +
+      (lista.length ? lista.map((a) => {
+        const mio = a.autor === S.view.yo;
+        const m = a.partidoId && S.view.partidos.find((x) => x.id === a.partidoId);
+        return '<article class="tarjeta album"><div class="fila entre"><div class="crece"><b>' + h(a.titulo) + '</b><small class="suave">' + h(fCorta(a.fecha)) + ' · ' + h(TIPOS[a.tipo] || '') + ' · ' + h(a.categoria || 'Todo el club') + (m ? ' · vs ' + h(m.rival) : '') + '</small></div>' +
+          (mio && a.fotos.length < C.MAX_FOTOS_ALBUM ? '<button class="btn mini" data-act="agregarFotos" data-id="' + a.id + '">+ Foto</button>' : '') +
+          (mio || esDir() ? '<button class="btn-icono" data-act="borrarAlbum" data-id="' + a.id + '" aria-label="Eliminar álbum">' + icono('basura') + '</button>' : '') + '</div>' +
+          '<div class="album-fotos n' + a.fotos.length + '">' + a.fotos.map((f) => '<button class="foto" data-act="verFoto" data-id="' + a.id + '" data-foto="' + f + '"><img src="' + h(fotoUrl(f)) + '" loading="lazy" alt="Foto de ' + h(a.titulo) + '"></button>').join('') + '</div></article>';
+      }).join('') : seccion('', vacio(rol() === 'entrenador' ? 'Sube la primera foto del plantel con el botón +.' : 'Aún no hay fotos.')));
+  }
+
+  function formAlbum() {
+    const partidos = S.view.partidos.filter((m) => m.fecha >= C.sumarDias(HOY, -60) && m.fecha <= C.sumarDias(HOY, 7)).sort(porFecha).reverse();
+    return '<form id="form-modal">' + campo('Título', input('titulo', '', 'required maxlength="80" placeholder="Ej: Plantel Cadetes 2026"')) +
+      '<div class="campos">' + campo('Tipo', '<select name="tipo"><option value="plantel">Foto de plantel</option><option value="partido">Partido</option><option value="evento">Evento</option></select>') + campo('Fecha', input('fecha', HOY, 'type="date" required')) +
+      campo('Categoría', '<select name="categoria">' + opcionesCategoria(S.filtroCat, 'Todo el club') + '</select>') +
+      campo('Partido (opcional)', '<select name="partidoId"><option value="">–</option>' + partidos.map((m) => '<option value="' + m.id + '">' + h(fCorta(m.fecha) + ' · ' + m.categoria + ' vs ' + m.rival) + '</option>').join('') + '</select>') + '</div>' +
+      campo('Fotos (máximo ' + C.MAX_FOTOS_ALBUM + ')', '<input type="file" name="archivos" accept="image/*" multiple required>') +
+      '<p class="ayuda">Se achican automáticamente antes de subirlas para no llenar el servidor.</p>' + pie('Subir fotos') + '</form>';
+  }
+
+  // ---------- Inventario ----------
+  function vistaInventario() {
+    const items = (S.view.inventario || []).slice().sort((a, b) => a.tipo.localeCompare(b.tipo) || a.nombre.localeCompare(b.nombre));
+    const pr = S.view.prestamos || [];
+    const activos = pr.filter((x) => !x.devuelto).sort((a, b) => b.fecha.localeCompare(a.fecha));
+    const devueltos = pr.filter((x) => x.devuelto).sort((a, b) => b.devuelto.localeCompare(a.devuelto)).slice(0, 30);
+    const quien = (r) => (usuario(r) || { nombre: '?' }).nombre;
+    const item = (id) => items.find((i) => i.id === id) || { nombre: '?' };
+    const filaPr = (x) => '<li><div class="crece"><b>' + h(quien(x.rut)) + '</b><small>' + x.cantidad + ' × ' + h(item(x.itemId).nombre) + ' · ' + h(fCorta(x.fecha)) + (x.nota ? ' · ' + h(x.nota) : '') + (x.devuelto ? ' · devuelto ' + h(fCorta(x.devuelto)) : '') + '</small></div>' +
+      (x.devuelto ? insignia('Devuelto', 'ok') : '<button class="btn mini" data-act="devolver" data-id="' + x.id + '">Devuelto</button>') + '</li>';
+    return seccion('Material del club', items.length ? '<ul class="lista">' + items.map((i) => {
+      const fuera = activos.filter((x) => x.itemId === i.id).reduce((s, x) => s + x.cantidad, 0);
+      return '<li class="envolver"><span class="ico-celda c-inventario">' + icono('inventario') + '</span><div class="crece"><b>' + h(i.nombre) + '</b><small>' + h(i.tipo) + ' · ' + i.total + ' en total' + (i.notas ? ' · ' + h(i.notas) : '') + '</small>' +
+        '<div class="fila insignias">' + insignia((i.total - fuera) + ' disponibles', i.total - fuera ? 'ok' : 'mal') + (fuera ? insignia(fuera + ' entregados', 'oro') : '') +
+        '<button class="btn mini primario" data-act="entregar" data-id="' + i.id + '">Entregar</button><button class="btn mini" data-act="editarMaterial" data-id="' + i.id + '">Editar</button></div></div></li>';
+    }).join('') + '</ul>' : vacio('Agrega balones, petos, camisetas y otros materiales con el botón +.')) +
+      seccion('Quién tiene qué (' + activos.length + ')', activos.length ? '<ul class="lista">' + activos.map(filaPr).join('') + '</ul>' : vacio('No hay material entregado.')) +
+      (devueltos.length ? '<details class="tabla-detalle"><summary>Devoluciones recientes</summary><div class="tarjeta"><ul class="lista">' + devueltos.map(filaPr).join('') + '</ul></div></details>' : '');
+  }
+
+  function formMaterial(i) {
+    const nuevo = !i;
+    i = i || { tipo: 'Balones' };
+    return '<form id="form-modal">' + (nuevo ? '' : '<input type="hidden" name="id" value="' + i.id + '">') + campo('Material', input('nombre', i.nombre, 'required maxlength="80" placeholder="Ej: Balones talla 3"')) +
+      '<div class="campos">' + campo('Tipo', '<select name="tipo">' + opciones(['Balones', 'Petos', 'Camisetas', 'Conos', 'Botiquín', 'Otros'], i.tipo) + '</select>') + campo('Cantidad total', input('total', i.total, 'type="number" min="0" required inputmode="numeric"')) + '</div>' +
+      campo('Notas', input('notas', i.notas, 'maxlength="200" placeholder="Dónde se guarda, estado..."')) +
+      pie(nuevo ? 'Agregar' : 'Guardar', nuevo ? '' : '<button type="button" class="btn peligro" data-act="borrarMaterial" data-id="' + i.id + '">Eliminar</button>') + '</form>';
+  }
+
+  function formEntrega(i) {
+    const staff = S.view.usuarios.filter((u) => esPersonal(u) && u.activo !== false);
+    return '<form id="form-modal"><input type="hidden" name="itemId" value="' + i.id + '"><p class="ayuda"><b>' + h(i.nombre) + '</b></p>' +
+      campo('¿A quién?', '<select name="rut" required><optgroup label="Cuerpo técnico y directiva">' + staff.map((u) => '<option value="' + u.rut + '">' + h(u.nombre) + '</option>').join('') + '</optgroup>' +
+        '<optgroup label="Jugadores">' + jugadores().map((j) => '<option value="' + j.rut + '">' + h(j.nombre) + ' · ' + h(j.categoria) + '</option>').join('') + '</optgroup></select>') +
+      '<div class="campos">' + campo('Cantidad', input('cantidad', 1, 'type="number" min="1" required inputmode="numeric"')) + campo('Fecha', input('fecha', HOY, 'type="date"')) + '</div>' +
+      campo('Nota', input('nota', '', 'maxlength="120" placeholder="Ej: camiseta N° 10"')) + pie('Registrar entrega') + '</form>';
+  }
+
+  // ---------- Cumpleaños ----------
+  function listaCumples(lista) {
+    const hoyD = new Date().getDate();
+    return '<ul class="lista">' + lista.map((c) => '<li><span class="ico-celda c-cumple"><b>' + c.dia + '</b></span><div class="crece"><b>' + h(c.nombre) + (c.esYo ? ' (tú)' : '') + '</b><small>Cumple ' + c.cumple + (c.categoria ? ' · ' + h(c.categoria) : '') + '</small></div>' +
+      (c.dia === hoyD ? insignia('¡Hoy! 🎂', 'oro') : c.dia < hoyD ? '<small class="suave">ya pasó</small>' : '') + '</li>').join('') + '</ul>';
+  }
+
+  // ---------- Reporte mensual (PDF y Excel) ----------
+  function imprimir(html, titulo) {
+    let el = $('#imprimir');
+    if (!el) { el = document.createElement('div'); el.id = 'imprimir'; document.body.appendChild(el); }
+    el.innerHTML = html;
+    const antes = document.title;
+    document.title = titulo;
+    document.body.classList.add('imprimiendo');
+    const fin = () => { document.body.classList.remove('imprimiendo'); document.title = antes; window.removeEventListener('afterprint', fin); };
+    window.addEventListener('afterprint', fin);
+    setTimeout(() => { window.print(); }, 60);
+  }
+
+  function formReporte() {
+    const m = new Date().getMonth();
+    return '<div class="campos">' + campo('Mes', '<select id="rep-mes">' + C.MESES_LARGOS.map((n, i) => '<option value="' + i + '"' + (i === m ? ' selected' : '') + '>' + n + '</option>').join('') + '</select>') +
+      campo('Año', '<select id="rep-anio">' + [ANIO - 1, ANIO].map((a) => '<option' + (a === ANIO ? ' selected' : '') + '>' + a + '</option>').join('') + '</select>') + '</div>' +
+      '<div id="rep-resumen">' + resumenReporte(C.reporteMensual(S.view, ANIO, m)) + '</div>' +
+      '<div class="modal-pie columna"><button class="btn primario ancho" data-act="reporteExcel">' + icono('excel') + ' Descargar Excel</button><button class="btn ancho" data-act="reportePdf">' + icono('pdf') + ' Descargar PDF</button></div>';
+  }
+  const reporteElegido = () => C.reporteMensual(S.view, Number($('#rep-anio').value), Number($('#rep-mes').value));
+  const resumenReporte = (r) => '<div class="kpis"><div class="kpi verde"><small>Ingresos</small><b>' + clp(r.totales.ingresos) + '</b></div><div class="kpi rojo"><small>Gastos</small><b>' + clp(r.totales.gastos) + '</b></div>' +
+    '<div class="kpi ' + (r.totales.balance >= 0 ? 'verde' : 'rojo') + '"><small>Balance</small><b>' + clp(r.totales.balance) + '</b></div><div class="kpi oro"><small>Morosos</small><b>' + r.totales.morosos + '</b><small>' + clp(r.totales.deuda) + '</small></div></div>';
+
+  function descargarExcel(r) {
+    const t = r.totales;
+    const hojas = [
+      { nombre: 'Resumen', filas: [['Reporte ' + r.titulo, ''], ['Cuotas', t.cuotas], ['Federativos', t.federativos], ['Otros cobros', t.cobros], ['Otros ingresos', t.otros], ['Total ingresos', t.ingresos], ['Gastos', t.gastos], ['Balance', t.balance], ['Jugadores con cuotas atrasadas', t.morosos], ['Deuda total', t.deuda]] },
+      { nombre: 'Ingresos', filas: [['Fecha', 'Tipo', 'Detalle', 'Jugador', 'Categoría', 'Medio', 'Monto']].concat(r.ingresos.map((x) => [x.fecha, x.tipo, x.detalle, x.nombre, x.categoria, x.medio, x.monto])) },
+      { nombre: 'Gastos', filas: [['Fecha', 'Detalle', 'Monto']].concat(r.gastos.map((x) => [x.fecha, x.detalle, x.monto])) },
+      { nombre: 'Morosos', filas: [['Jugador', 'Categoría', 'Meses adeudados', 'Deuda', 'Teléfono']].concat(r.morosos.map((x) => [x.nombre, x.categoria, x.meses.map((m) => C.MESES[m]).join(', '), x.deuda, x.telefono])) },
+    ];
+    const blob = new Blob([C.crearXlsx(hojas)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Reporte Vieux Gaulois ' + r.titulo + '.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  function imprimirReporte(r) {
+    const t = r.totales;
+    const tabla = (cab, filas) => '<table class="pdf-tabla"><thead><tr>' + cab.map((c) => '<th>' + h(c) + '</th>').join('') + '</tr></thead><tbody>' + (filas.length ? filas.map((f) => '<tr>' + f.map((c) => '<td>' + h(c) + '</td>').join('') + '</tr>').join('') : '<tr><td colspan="' + cab.length + '">Sin registros</td></tr>') + '</tbody></table>';
+    imprimir('<div class="pdf"><div class="pdf-cab"><img src="' + ESCUDO + '" alt=""><div><b>VIEUX GAULOIS HANDBALL</b><span>Reporte financiero</span></div></div><h1>' + h(r.titulo) + '</h1>' +
+      tabla(['Resumen', 'Monto'], [['Cuotas', clp(t.cuotas)], ['Federativos', clp(t.federativos)], ['Otros cobros', clp(t.cobros)], ['Otros ingresos', clp(t.otros)], ['Total ingresos', clp(t.ingresos)], ['Gastos', clp(t.gastos)], ['Balance', clp(t.balance)], ['Deuda de ' + t.morosos + ' jugadores', clp(t.deuda)]]) +
+      '<h2>Ingresos</h2>' + tabla(['Fecha', 'Tipo', 'Detalle', 'Jugador', 'Monto'], r.ingresos.map((x) => [fCorta(x.fecha), x.tipo, x.detalle, x.nombre, clp(x.monto)])) +
+      '<h2>Gastos</h2>' + tabla(['Fecha', 'Detalle', 'Monto'], r.gastos.map((x) => [fCorta(x.fecha), x.detalle, clp(x.monto)])) +
+      '<h2>Cuotas atrasadas</h2>' + tabla(['Jugador', 'Categoría', 'Meses', 'Deuda'], r.morosos.map((x) => [x.nombre, x.categoria, x.meses.map((m) => C.MESES[m]).join(', '), clp(x.deuda)])) +
+      '<p class="pdf-pie">Generado el ' + h(fLarga(HOY)) + ' desde la app del club.</p></div>', 'Reporte Vieux Gaulois ' + r.titulo);
+  }
+
+  // ---------- Recordatorios de cuota (manuales, desde Finanzas) ----------
+  const contactoDe = (j) => (menor(j) ? apoderados(j.rut)[0] : null) || j;
+  const telWa = (t) => { let d = String(t || '').replace(/\D/g, ''); if (d.length === 9 && d[0] === '9') d = '56' + d; return d.length >= 10 ? d : ''; };
+  function textoRecordatorio(j, mes, c) {
+    const venc = String(S.view.config.diaVencimiento).padStart(2, '0') + '/' + String(mes + 1).padStart(2, '0');
+    const vencida = estadoMes(j.rut, ANIO, mes) === 'vencido';
+    return 'Hola ' + c.nombre.split(/\s+/)[0] + ', ' + (vencida ? 'te contamos que ' : 'te recordamos que ') + (c.rut !== j.rut ? 'la cuota de ' + j.nombre.split(/\s+/)[0] : 'tu cuota') +
+      ' de ' + C.MESES_LARGOS[mes].toLowerCase() + ' (' + clp(C.cuotaDe(S.view, j)) + ') ' + (vencida ? 'venció el ' + venc + ' y aún aparece pendiente.' : 'vence el ' + venc + '.') +
+      ' Puedes pagar e informar el pago en la app de Vieux Gaulois. ¡Gracias!';
+  }
+
+  function seccionRecordatorios() {
+    const mes = new Date().getMonth();
+    if (!S.view.config.mesesCobro.includes(mes)) return '';
+    const informado = (j) => (S.view.pagosInformados || []).some((x) => x.rut === j.rut && x.estado === 'pendiente' && x.concepto === 'cuota' && x.mes === mes);
+    const lista = jugadores().filter((j) => ['pendiente', 'vencido'].includes(estadoMes(j.rut, ANIO, mes)) && !informado(j));
+    if (!lista.length) return '';
+    return seccion('Recordar cuota de ' + C.MESES_LARGOS[mes].toLowerCase() + ' (' + lista.length + ')', '<ul class="lista">' + lista.slice(0, 40).map((j) => {
+      const c = contactoDe(j);
+      const txt = textoRecordatorio(j, mes, c);
+      const wa = telWa(c.telefono);
+      return '<li class="envolver"><div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(etiqueta(j)) + (c.rut !== j.rut ? ' · apoderado: ' + h(c.nombre) : '') + '</small>' +
+        '<div class="fila insignias">' + (estadoMes(j.rut, ANIO, mes) === 'vencido' ? insignia('Vencida', 'mal') : insignia('Por vencer', 'alerta')) +
+        (wa ? '<a class="btn mini" href="https://wa.me/' + wa + '?text=' + encodeURIComponent(txt) + '" target="_blank" rel="noopener noreferrer">' + icono('whatsapp') + ' WhatsApp</a>' : '') +
+        (c.email ? '<a class="btn mini" href="mailto:' + h(c.email) + '?subject=' + encodeURIComponent('Cuota de ' + C.MESES_LARGOS[mes].toLowerCase() + ' · Vieux Gaulois') + '&body=' + encodeURIComponent(txt) + '">' + icono('correo') + ' Correo</a>' : '') +
+        (!wa && !c.email ? '<small class="suave">sin teléfono ni correo</small>' : '') + '</div></div></li>';
+    }).join('') + '</ul>', btnTexto('Automáticos', 'tab', 'data-tab="ajustes"'), 'Los recordatorios automáticos (notificación, correo y WhatsApp) se configuran en Ajustes. Estos botones abren WhatsApp o tu correo con el mensaje listo.');
+  }
+
+  // ---------- Notificaciones push ----------
+  const PUSH_OK = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const esIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent);
+  function estadoPush() {
+    if (S.modo !== 'servidor') return ['demo', 'Con la app publicada'];
+    if (!PUSH_OK()) return ['no', esIOS() ? 'Agrega la app a tu inicio' : 'No disponible'];
+    if (Notification.permission === 'denied') return ['bloqueado', 'Bloqueadas'];
+    return leerLS('vg_push') === S.view.yo && Notification.permission === 'granted' ? ['activo', 'Activadas'] : ['inactivo', 'Desactivadas'];
+  }
+  const b64uBytes = (s) => { const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)); return Uint8Array.from(b, (c) => c.charCodeAt(0)); };
+
+  async function activarPush() {
+    const [est] = estadoPush();
+    if (est === 'demo') { toast('Las notificaciones funcionan con la app publicada en el servidor, no en el HTML de prueba'); return; }
+    if (est === 'no') { toast(esIOS() ? 'En iPhone: Compartir → "Agregar a inicio", abre la app desde ahí y actívalas' : 'Este navegador no permite notificaciones', 'error'); return; }
+    if (est === 'bloqueado') { toast('Las notificaciones están bloqueadas: actívalas en los ajustes del navegador', 'error'); return; }
+    try {
+      if (est === 'activo') {
+        const reg = await navigator.serviceWorker.getRegistration();
+        const sub = reg && await reg.pushManager.getSubscription();
+        if (sub) { await Servidor.pedir('POST', 'api/push/quitar', { endpoint: sub.endpoint }); await sub.unsubscribe(); }
+        guardarLS('vg_push', null);
+        toast('Notificaciones desactivadas');
+      } else {
+        if (await Notification.requestPermission() !== 'granted') { toast('No diste permiso para notificaciones', 'error'); return; }
+        await navigator.serviceWorker.register('sw.js');
+        const reg = await navigator.serviceWorker.ready;
+        const { clave } = await Servidor.pedir('GET', 'api/push/clave');
+        const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(clave) });
+        await Servidor.pedir('POST', 'api/push/suscribir', { sub: sub.toJSON() });
+        guardarLS('vg_push', S.view.yo);
+        toast('Listo: te avisaremos de citaciones, mensajes, avisos y cuotas', 'ok');
+      }
+    } catch (e) { toast('No se pudieron activar: ' + e.message, 'error'); }
+    ACCIONES.cuenta();
+  }
+
   // ---------- Render ----------
   const VISTAS = {
     inicio: vistaInicio, avisos: vistaAvisos, jugadores: vistaJugadores, finanzas: () => (esDir() ? vistaFinanzas() : vistaMisFinanzas()), entrenamientos: vistaEntrenamientos, partidos: vistaPartidos,
     lesiones: vistaLesiones, documentos: vistaDocumentos, convenios: vistaConvenios, ajustes: vistaAjustes, calendario: vistaCalendario, perfil: vistaPerfil, mas: vistaMas,
     chat: vistaChat, pizarra: vistaPizarra, jugadas: vistaJugadas,
+    estadisticas: vistaEstadisticas, fisico: vistaFisico, encuestas: vistaEncuestas, galeria: vistaGaleria, inventario: vistaInventario,
   };
 
   function render() {
     const app = $('#app');
     document.body.classList.toggle('sin-sesion', !S.view);
-    if (!S.view) { app.innerHTML = vistaLogin(); return; }
-    // Documentos pendientes de firma: el jugador debe firmarlos antes de entrar.
-    if (rol() === 'jugador' && (S.view.pendientes || []).length) {
-      const doc = S.view.documentos.find((d) => d.id === S.view.pendientes[0]);
+    if (!S.view && S.sinHijos) {
       document.body.classList.add('sin-sesion');
-      app.innerHTML = vistaFirma(doc);
+      app.innerHTML = '<div class="firma"><div class="firma-caja"><img src="' + ESCUDO + '" alt="" class="firma-escudo"><h1>Hola, ' + h(S.sinHijos.nombre.split(/\s+/)[0]) + '</h1>' +
+        '<div class="tarjeta firma-texto"><p>Tu cuenta de apoderado no tiene jugadores activos asociados. Si es un error, avísale a la directiva del club.</p></div>' +
+        '<button class="btn-texto centro" data-act="salir">Salir</button></div></div>';
       return;
+    }
+    if (!S.view) { app.innerHTML = vistaLogin(); return; }
+    // Documentos pendientes de firma: el jugador (o su apoderado, si es menor) los firma antes de entrar.
+    const pend = S.view.pendientes || [];
+    if (rol() === 'jugador' && pend.length) {
+      if (S.apo || !S.view.menor) {
+        const doc = S.view.documentos.find((d) => d.id === pend[0]);
+        document.body.classList.add('sin-sesion');
+        app.innerHTML = vistaFirma(doc);
+        return;
+      }
+      if (pend.includes('consentimiento')) {
+        document.body.classList.add('sin-sesion');
+        app.innerHTML = vistaEsperaApoderado();
+        return;
+      }
     }
     if (!permitidas().includes(S.tab)) S.tab = TABS[rol()].barra[0];
     if (S.tab === 'avisos') guardarLS('vg_av_' + S.view.yo, JSON.stringify(avisos().map((a) => a.id)));
@@ -1483,10 +2100,25 @@
       toast('Tema: ' + TEMAS[sig]);
     },
     cuenta: () => {
-      const u = yo();
-      abrirModal('Mi cuenta', '<div class="ficha-cab"><div class="avatar grande">' + h(u.nombre.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase()) + '</div><div class="crece"><b>' + h(u.nombre) + '</b><small>' + h(u.cargo || u.rol) + '</small><small>' + h(u.usuario ? 'Usuario: ' + u.usuario : C.formatearRut(u.rut)) + '</small></div></div>' + seccionCuenta());
+      const u = S.apo ? Object.assign({ rol: 'apoderado', cargo: 'Apoderado de ' + S.apo.hijos.map((x) => x.usuarios[0].nombre.split(/\s+/)[0]).join(' y ') }, S.view.apoderado) : yo();
+      const [, txtPush] = estadoPush();
+      abrirModal('Mi cuenta', '<div class="ficha-cab"><div class="avatar grande">' + h(iniciales(u.nombre)) + '</div><div class="crece"><b>' + h(u.nombre) + '</b><small>' + h(u.cargo || u.rol) + '</small><small>' + h(u.usuario ? 'Usuario: ' + u.usuario : C.formatearRut(u.rut)) + '</small></div></div>' +
+        seccion('Avisos', '<ul class="lista clic"><li data-act="activarPush"><span class="ico-celda c-avisos">' + icono('campana') + '</span><div class="crece"><b>Notificaciones en este dispositivo</b><small>Citaciones, mensajes, avisos y cuotas</small></div><span class="valor">' + h(txtPush) + '</span></li>' +
+          (S.apo ? '<li data-act="misDatosApoderado"><span class="ico-celda c-gris">' + icono('perfil') + '</span><div class="crece"><b>Mis datos de contacto</b><small>Para recordatorios de cuotas</small></div><span class="chevron">' + icono('flecha') + '</span></li>' : '') + '</ul>') +
+        seccionCuenta());
     },
-    salir: async () => { cerrarModal(); await B().salir(); S.view = null; S.tab = null; S.hilo = null; S.piz = null; S.borrador = {}; render(); },
+    activarPush: () => activarPush(),
+    misDatosApoderado: () => abrirModal('Mis datos de contacto', formMisDatos(S.view.apoderado, true), (o) => accion('jugador.editar', o, 'Datos guardados')),
+    recargar: async () => { try { recibir(await B().estado()); render(); } catch (e) { toast(e.message, 'error'); } },
+    elegirHijo: (d) => { S.hijo = d.rut; guardarLS('vg_hijo', d.rut); S.hilo = null; S.piz = null; recibir(S.apo); render(); window.scrollTo(0, 0); },
+    verTemporada: () => {
+      const t = (S.view.cambiosTemporada || []).filter((x) => x.anio === ANIO).pop();
+      abrirModal('Temporada ' + ANIO, '<p class="ayuda">El ' + h(fLarga(t.fecha)) + ' los jugadores subieron de año (1er → 2do) o de categoría (2do año → 1er año de la siguiente). Revisa los números marcados: quedaron libres porque ya estaban ocupados.</p>' +
+        '<div class="tarjeta"><ul class="lista">' + t.cambios.map((c) => '<li><div class="crece"><b>' + h(c.nombre) + '</b><small>' + h(c.de) + ' → ' + h(c.a) + '</small></div>' + (c.numeroLiberado != null ? insignia('Asignar N° (tenía ' + c.numeroLiberado + ')', 'alerta') : '') + '</li>').join('') + '</ul></div>' +
+        '<div class="modal-pie columna"><button class="btn primario ancho" data-act="temporadaVista">Entendido</button></div>');
+    },
+    temporadaVista: () => { guardarLS('vg_temp_' + ANIO, '1'); cerrarModal(); render(); },
+    salir: async () => { cerrarModal(); await B().salir(); S.view = null; S.apo = null; S.sinHijos = null; S.tab = null; S.hilo = null; S.piz = null; S.borrador = {}; render(); },
     rellenarDemo: (d) => {
       const f = $('#form-login');
       f.rut.value = d.usuario; f.clave.value = d.clave;
@@ -1497,7 +2129,7 @@
       campo('Repite la nueva clave', '<input name="repetir" type="password" required minlength="4" autocomplete="new-password">') + pie('Cambiar clave') + '</form>',
     async (o) => {
       if (o.nueva !== o.repetir) throw new Error('Las claves nuevas no coinciden');
-      S.view = await B().clave(o.actual, o.nueva);
+      recibir(await B().clave(o.actual, o.nueva));
       render(); toast('Clave actualizada', 'ok'); return true;
     }),
 
@@ -1510,7 +2142,22 @@
     nuevoJugador: () => abrirModal('Inscribir jugador', formJugador(), (o) => accion('jugador.crear', o, 'Jugador inscrito')),
     verJugador: (d) => abrirModal('Ficha del jugador', fichaJugador(d.rut)),
     editarJugador: (d) => abrirModal('Editar jugador', formJugador(usuario(d.rut)), (o) => accion('jugador.editar', o, 'Datos guardados')),
-    misDatos: () => abrirModal('Mis datos de contacto', formMisDatos(yo()), (o) => accion('jugador.editar', o, 'Datos guardados')),
+    misDatos: () => abrirModal('Datos de contacto', formMisDatos(yo()), (o) => accion('jugador.editar', o, 'Datos guardados')),
+    credencial: (d) => abrirModal('Credencial digital', vistaCredencial(d.rut ? usuario(d.rut) : yo())),
+    fotoPerfil: async (d) => {
+      const [f] = await elegirArchivos(false);
+      if (!f) return;
+      try {
+        const data = await comprimir(f, 480, 140, true);
+        if (await accion('foto.perfil', { rut: d.rut, data }, 'Foto actualizada')) abrirModal('Credencial digital', vistaCredencial(usuario(d.rut)));
+      } catch (e) { toast(e.message, 'error'); }
+    },
+    fichaMedica: (d) => abrirModal('Ficha médica', formFichaMedica(usuario(d.rut)), (o) => accion('ficha.guardar', o, 'Ficha médica guardada')),
+    agregarApoderado: (d) => abrirModal('Agregar apoderado', '<form id="form-modal"><input type="hidden" name="rut" value="' + h(d.rut) + '"><p class="ayuda">Si ya tiene cuenta (otro hijo en el club), basta con el RUT. Entra con su RUT y los 4 primeros dígitos.</p>' +
+      campo('RUT del apoderado', input('apoderadoRut', '', 'required placeholder="12.345.678-9"')) + campo('Nombre', input('apoderadoNombre', '', 'maxlength="80"')) +
+      '<div class="campos">' + campo('Teléfono', input('apoderadoTelefono', '', 'type="tel"')) + campo('Email', input('apoderadoEmail', '', 'type="email"')) + '</div>' + pie('Agregar') + '</form>',
+    async (o) => { const ok = await accion('apoderado.vincular', o, 'Apoderado agregado'); if (ok) abrirModal('Ficha del jugador', fichaJugador(d.rut)); return false; }),
+    quitarApoderado: (d) => { if (confirm('¿Quitar a este apoderado? Ya no podrá ver ni gestionar a este jugador.')) accion('apoderado.desvincular', { rut: d.rut, apoderadoRut: d.apoderado }, 'Apoderado quitado').then((ok) => { if (ok) abrirModal('Ficha del jugador', fichaJugador(d.rut)); }); },
     activoJugador: (d) => {
       if (!confirm(d.activo ? '¿Reactivar a este jugador?' : '¿Dar de baja a este jugador? Ya no podrá ingresar.')) return;
       enviarConError(accion('jugador.activo', { rut: d.rut, activo: !!d.activo }, 'Listo'));
@@ -1661,10 +2308,89 @@
     compartirConvocatoria: (d) => navigator.share({ text: textoConvocatoria(partido(d.id)) }).catch(() => {}),
     resultado: (d) => {
       const m = partido(d.id);
-      abrirModal('Resultado vs ' + m.rival, '<form id="form-modal"><div class="campos">' + campo('Vieux Gaulois', input('nuestro', m.resultado ? m.resultado.nuestro : '', 'type="number" min="0" inputmode="numeric"')) +
-        campo(m.rival, input('rival', m.resultado ? m.resultado.rival : '', 'type="number" min="0" inputmode="numeric"')) + '</div>' + pie() + '</form>',
-      (o) => accion('partido.resultado', { id: m.id, nuestro: o.nuestro, rival: o.rival }, 'Resultado guardado'));
+      abrirModal('Resultado vs ' + m.rival, formResultado(m), (o) => {
+        const estadisticas = {};
+        (o.jugo || []).forEach((rut) => { estadisticas[rut] = {}; C.CAMPOS_ESTADISTICA.forEach(([k]) => { estadisticas[rut][k] = o['e_' + rut + '_' + k] || 0; }); });
+        return accion('partido.resultado', { id: m.id, nuestro: o.nuestro, rival: o.rival, comentario: o.comentario, estadisticas }, 'Resultado y estadísticas guardados');
+      });
     },
+
+    // Plan de entrenamiento
+    verPlan: (d) => { const e = S.view.entrenamientos.find((x) => x.id === d.id); abrirModal('Plan del entrenamiento', verPlan(e)); },
+    editarPlan: (d) => {
+      const e = S.view.entrenamientos.find((x) => x.id === d.id);
+      abrirModal('Plan del entrenamiento', formPlan(e), (o) => {
+        const plan = (o.pn || []).map((nombre, i) => ({ nombre, minutos: (o.pm || [])[i], detalle: (o.pd || [])[i], jugada: (o.pj || [])[i] })).filter((x) => x.nombre.trim());
+        return accion('entrenamiento.plan', { id: e.id, plan, planVisible: !!o.planVisible }, 'Plan guardado');
+      });
+    },
+    agregarFilaPlan: () => { $('#plan-filas').insertAdjacentHTML('beforeend', filaPlan({}, S.view.jugadas || [])); },
+    abrirJugadaPlan: (d) => {
+      const j = S.view.jugadas.find((x) => x.id === d.id);
+      cerrarModal();
+      cargarJugada(j, !esStaff());
+      S.tab = esStaff() ? 'pizarra' : 'jugadas';
+      render(); window.scrollTo(0, 0);
+    },
+
+    // Evaluación física
+    nuevaEvaluacion: (d) => abrirEvaluacion(d.cat || catEvaluada(), HOY),
+    verEvolucion: (d) => { const j = usuario(d.rut); abrirModal(j.nombre, '<p class="ayuda">' + h(etiqueta(j)) + '</p>' + bloqueEvaluaciones((S.view.evaluaciones || []).filter((e) => e.rut === d.rut), true)); },
+    borrarEvaluacion: (d) => {
+      if (!confirm('¿Eliminar esta medición?')) return;
+      const e = S.view.evaluaciones.find((x) => x.id === d.id);
+      accion('evaluacion.eliminar', { id: d.id }, 'Eliminada').then((ok) => { if (ok) ACCIONES.verEvolucion({ rut: e.rut }); });
+    },
+
+    // Encuestas
+    nuevaEncuesta: () => abrirModal('Nueva encuesta', formEncuesta(), (o) => accion('encuesta.guardar', o, 'Encuesta publicada')),
+    votar: (d) => { S.cambiarVoto = null; accion('encuesta.votar', { id: d.id, opcion: Number(d.op) }, '¡Gracias por votar!'); },
+    cambiarVoto: (d) => { S.cambiarVoto = d.id; render(); },
+    cerrarEncuesta: (d) => { if (confirm('¿Cerrar la encuesta? Ya no se podrá votar.')) accion('encuesta.cerrar', { id: d.id }, 'Encuesta cerrada'); },
+    borrarEncuesta: (d) => { if (confirm('¿Eliminar la encuesta y sus votos?')) accion('encuesta.eliminar', { id: d.id }, 'Encuesta eliminada'); },
+
+    // Galería
+    nuevoAlbum: () => abrirModal('Subir fotos', formAlbum(), async (o) => {
+      const archivos = Array.from($('#form-modal input[type=file]').files || []);
+      if (archivos.length > C.MAX_FOTOS_ALBUM) throw new Error('Elige máximo ' + C.MAX_FOTOS_ALBUM + ' fotos');
+      $('#form-error').textContent = 'Preparando fotos…';
+      const fotos = [];
+      for (const f of archivos) fotos.push(await comprimir(f, 1280, 260, false));
+      $('#form-error').textContent = '';
+      return accion('galeria.guardar', { titulo: o.titulo, fecha: o.fecha, tipo: o.tipo, categoria: o.categoria, partidoId: o.partidoId, fotos }, 'Fotos publicadas');
+    }),
+    agregarFotos: async (d) => {
+      const a = S.view.galeria.find((x) => x.id === d.id);
+      const libres = C.MAX_FOTOS_ALBUM - a.fotos.length;
+      const archivos = (await elegirArchivos(true)).slice(0, libres);
+      if (!archivos.length) return;
+      try {
+        const fotos = [];
+        for (const f of archivos) fotos.push(await comprimir(f, 1280, 260, false));
+        accion('galeria.guardar', { id: a.id, titulo: a.titulo, fecha: a.fecha, tipo: a.tipo, categoria: a.categoria, partidoId: a.partidoId, fotos }, 'Foto agregada');
+      } catch (e) { toast(e.message, 'error'); }
+    },
+    verFoto: (d) => {
+      const a = S.view.galeria.find((x) => x.id === d.id);
+      const puede = esDir() || a.autor === S.view.yo;
+      abrirModal(a.titulo, '<img class="foto-grande" src="' + h(fotoUrl(d.foto)) + '" alt="">' +
+        '<div class="modal-pie columna"><a class="btn ancho" href="' + h(fotoUrl(d.foto)) + '" download="' + h(a.titulo) + '.jpg">Descargar</a>' +
+        (puede ? '<button class="btn ancho peligro" data-act="quitarFoto" data-id="' + a.id + '" data-foto="' + d.foto + '">Quitar foto</button>' : '') + '</div>');
+    },
+    quitarFoto: (d) => { if (confirm('¿Quitar esta foto?')) enviarConError(accion('galeria.quitarFoto', { id: d.id, foto: d.foto }, 'Foto quitada')); },
+    borrarAlbum: (d) => { if (confirm('¿Eliminar el álbum con todas sus fotos?')) accion('galeria.eliminar', { id: d.id }, 'Álbum eliminado'); },
+
+    // Inventario
+    nuevoMaterial: () => abrirModal('Agregar material', formMaterial(), (o) => accion('inventario.guardar', o, 'Material agregado')),
+    editarMaterial: (d) => abrirModal('Editar material', formMaterial(S.view.inventario.find((x) => x.id === d.id)), (o) => accion('inventario.guardar', o, 'Guardado')),
+    borrarMaterial: (d) => { if (confirm('¿Eliminar este material del inventario?')) enviarConError(accion('inventario.eliminar', { id: d.id }, 'Eliminado')); },
+    entregar: (d) => abrirModal('Entregar material', formEntrega(S.view.inventario.find((x) => x.id === d.id)), (o) => accion('prestamo.crear', o, 'Entrega registrada')),
+    devolver: (d) => accion('prestamo.devolver', { id: d.id }, 'Devolución registrada'),
+
+    // Reporte mensual
+    reporte: () => abrirModal('Reporte mensual', formReporte()),
+    reporteExcel: () => descargarExcel(reporteElegido()),
+    reportePdf: () => { const r = reporteElegido(); cerrarModal(); imprimirReporte(r); },
     responder: async (d) => {
       const ok = await accion('citacion.responder', { id: d.id, respuesta: d.r }, d.r === 'confirmado' ? '¡Confirmado! Nos vemos en la cancha' : 'Le avisamos al entrenador');
       if (ok && !$('#modal').hidden) abrirModal('Convocatoria', vistaConvocatoria(partido(d.id)));
@@ -1712,9 +2438,20 @@
     activoStaff: (d) => { if (confirm(d.activo ? '¿Activar esta cuenta?' : '¿Desactivar esta cuenta? No podrá ingresar.')) accion('staff.activo', { rut: d.rut, activo: !!d.activo }, 'Listo'); },
     reiniciarDemo: () => {
       if (!confirm('¿Borrar todos los cambios y volver a los datos de ejemplo?')) return;
-      Local.db = C.dbEjemplo(); Local.guardar(); Local.salir(); S.view = null; render();
+      Local.db = C.dbEjemplo(); try { Local.guardar(); } catch (e) { /* sin almacenamiento */ } Local.salir(); S.view = null; S.apo = null; render();
     },
   };
+
+  function abrirEvaluacion(cat, fecha) {
+    abrirModal('Registrar tests físicos', formEvaluacion(cat, fecha), (o) => {
+      const registros = jugadores().filter((j) => j.categoria === o.cat).map((j) => {
+        const valores = {};
+        C.TESTS_FISICOS.forEach(([k]) => { valores[k] = o['v_' + j.rut + '_' + k]; });
+        return { rut: j.rut, valores };
+      });
+      return accion('evaluacion.guardar', { fecha: o.fecha, registros }, 'Evaluación guardada');
+    });
+  }
 
   function abrirCitacion(id, todas) {
     const m = partido(id);
@@ -1746,6 +2483,10 @@
     const k = ev.target.dataset && ev.target.dataset.cambio;
     if (k === 'filtroCat') { S.filtroCat = ev.target.value; guardarLS('vg_cat', S.filtroCat); render(); }
     else if (k === 'verInactivos') { S.verInactivos = ev.target.checked; render(); }
+    else if (k === 'catEst') { S.catEst = ev.target.value; render(); }
+    else if (k === 'catFis') { S.catFis = ev.target.value; render(); }
+    if (ev.target.hasAttribute && ev.target.hasAttribute('data-eval-cat')) abrirEvaluacion(ev.target.value, ev.target.form.fecha.value || HOY);
+    if (ev.target.id === 'rep-mes' || ev.target.id === 'rep-anio') $('#rep-resumen').innerHTML = resumenReporte(reporteElegido());
     if (ev.target.hasAttribute && ev.target.hasAttribute('data-concepto-pago')) {
       const op = ev.target.selectedOptions[0];
       $('#campo-mes').hidden = ev.target.value !== 'cuota';
@@ -1773,7 +2514,7 @@
   document.addEventListener('input', (ev) => {
     if (ev.target.id === 'chat-texto') S.borrador[S.hilo] = ev.target.value;
     if (ev.target.dataset && ev.target.dataset.cambio === 'busqueda') { S.busqueda = ev.target.value; render(); }
-    if (ev.target.id === 'login-rut' || (ev.target.name === 'rut' && ev.target.form && ev.target.form.getAttribute('id') === 'form-modal' && ev.target.type !== 'hidden')) {
+    if (ev.target.id === 'login-rut' || ((ev.target.name === 'rut' || ev.target.name === 'apoderadoRut') && ev.target.form && ev.target.form.getAttribute('id') === 'form-modal' && ev.target.type !== 'hidden')) {
       // En el login también se escriben usuarios: sólo se da formato si parte con un número.
       if (!/^\d/.test(ev.target.value.trim())) return;
       const limpio = C.limpiarRut(ev.target.value).slice(0, 9);
@@ -1789,7 +2530,8 @@
     if (idForm === 'form-login') {
       const btn = f.querySelector('button'); btn.disabled = true;
       try {
-        S.view = await B().login(f.rut.value, f.clave.value);
+        S.sinHijos = null;
+        recibir(await B().login(f.rut.value, f.clave.value));
         S.tab = null; render(); window.scrollTo(0, 0);
       } catch (e) {
         $('#login-error').textContent = e.message;
@@ -1799,7 +2541,7 @@
     if (idForm === 'form-firma') {
       const o = datosForm(f);
       try {
-        S.view = await B().accion('documento.firmar', { id: o.id, aceptados: o.aceptados, nombreFirma: o.nombreFirma, apoderado: o.apoderado });
+        recibir(await llamar('documento.firmar', { id: o.id, aceptados: o.aceptados, nombreFirma: o.nombreFirma }));
         render(); window.scrollTo(0, 0); toast('Documento firmado. ¡Gracias!', 'ok');
       } catch (e) { $('#form-error').textContent = e.message; }
       return;
@@ -1829,6 +2571,9 @@
       accion('config.guardar', { cuotas, montoFederativo: o.montoFederativo, diaVencimiento: o.diaVencimiento, mesesCobro: o.mesesCobro }, 'Precios guardados');
     }
     if (f.dataset.form === 'pagos') accion('config.guardar', { datosTransferencia: o.datosTransferencia }, 'Datos de transferencia guardados');
+    if (f.dataset.form === 'recordatorios') {
+      accion('config.guardar', { recordatorios: { activo: !!o.activo, diasAntes: o.diasAntes, atraso: !!o.atraso, push: !!o.push, correo: !!o.correo, whatsapp: !!o.whatsapp } }, 'Recordatorios guardados');
+    }
     if (f.dataset.form === 'citacion') accion('config.guardar', { indicacionesCitacion: o.indicacionesCitacion }, 'Indicaciones guardadas');
     if (f.dataset.form === 'categorias') {
       accion('config.guardar', { categoriasBase: o.categoriasBase.split('\n').map((s) => s.trim()).filter(Boolean), cuotas: {} }, 'Categorías guardadas');
@@ -1844,10 +2589,15 @@
       const d = r.ok ? await r.json() : null;
       if (!d || !d.ok) throw new Error('sin servidor');
       S.modo = 'servidor'; S.demo = !!d.demo;
+      // El service worker recibe las notificaciones aunque la app esté cerrada.
+      if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('sw.js').catch(() => {});
     } catch (e) {
       S.modo = 'local'; S.demo = true; Local.cargar();
     }
-    try { S.view = await B().estado(); } catch (e) { S.view = null; }
+    try { recibir(await B().estado()); } catch (e) { S.view = null; }
+    // Una notificación abre la app en su sección (#chat, #finanzas...).
+    const ancla = location.hash.slice(1);
+    if (ancla && NOMBRES[ancla]) S.tab = ancla;
     render();
   }
 
@@ -1856,9 +2606,9 @@
     if (S.modo !== 'servidor' || !S.view || !$('#modal').hidden || document.visibilityState !== 'visible' || (S.piz && S.piz.reproduciendo)) return;
     try {
       const v = await B().estado();
-      if (v && JSON.stringify(v) !== JSON.stringify(S.view)) {
+      if (v && JSON.stringify(v) !== JSON.stringify(S.apo || S.view)) {
         const abajo = window.innerHeight + window.scrollY >= document.body.scrollHeight - 80;
-        S.view = v; render();
+        recibir(v); render();
         if (S.hilo && abajo) window.scrollTo(0, document.body.scrollHeight);
       }
     } catch (e) { /* sin conexión: se reintenta */ }

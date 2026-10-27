@@ -66,7 +66,7 @@ test('directiva crea entrenador con usuario y clave definidos', async () => {
   await assert.rejects(crear(DIR, { usuario: 'hacker', claveHash: 'abc', nombre: 'X', rol: 'directiva' }), /clave/);
   C.applyAction(db, DIR, await C.prepararAccion({ type: 'clave.definir', payload: { rut: 'usr:camila.f', clave: 'nueva999' } }, sha256));
   assert.ok(await C.verificarClave(u, 'nueva999', sha256));
-  assert.throws(() => C.applyAction(db, DIR, { type: 'clave.resetear', payload: { rut: 'usr:camila.f' } }), /Jugador no encontrado/);
+  assert.throws(() => C.applyAction(db, DIR, { type: 'clave.resetear', payload: { rut: 'usr:camila.f' } }), /Usuario no encontrado/);
 });
 
 test('edad', () => {
@@ -220,11 +220,9 @@ test('consentimiento: bloquea hasta firmar; menores firman con apoderado', () =>
   // Nueva versión: todos deben volver a firmar.
   C.applyAction(db, DIR, { type: 'documento.guardar', payload: { id: d.id, titulo: d.titulo, texto: d.texto + ' Actualizado.', puntos: d.puntos, nuevaVersion: true } });
   assert.deepStrictEqual(C.viewFor(db, JUG).pendientes, ['consentimiento']);
-  // Menor de edad sin apoderado.
+  // Un menor no firma: lo hace su apoderado desde su cuenta (ver pruebas de apoderado).
   const menor = db.usuarios.find((u) => u.nombre === 'Germán Meinas');
-  const firmaMenor = (apoderado) => C.applyAction(db, menor.rut, { type: 'documento.firmar', payload: { id: d.id, aceptados: d.puntos.map((_, i) => i), nombreFirma: 'Germán Meinas', apoderado } });
-  assert.throws(() => firmaMenor(''), /apoderado/);
-  firmaMenor('Ana Meinas 12.345.678-5');
+  assert.throws(() => C.applyAction(db, menor.rut, { type: 'documento.firmar', payload: { id: d.id, aceptados: d.puntos.map((_, i) => i), nombreFirma: 'Germán Meinas' } }), /apoderado firma por ti/);
 });
 
 test('compromiso de becados: la directiva lo envía y sólo esos jugadores lo firman', () => {
@@ -273,6 +271,8 @@ test('cobros: la directiva activa link o transferencia por concepto', () => {
 test('el jugador informa un pago y la directiva lo aprueba o rechaza', () => {
   const db = C.dbEjemplo();
   const j = db.usuarios.find((u) => u.nombre === 'Sofía Herrera');
+  const cons = db.documentos.find((x) => x.id === 'consentimiento');
+  C.applyAction(db, C.rutDesdeCuerpo(15678901), { type: 'documento.firmar', payload: { hijo: j.rut, id: cons.id, aceptados: cons.puntos.map((_, i) => i), nombreFirma: 'Carolina Herrera' } });
   const mes = C.mesesAdeudados(db, j.rut, ANIO)[0];
   const informar = (payload) => C.applyAction(db, j.rut, { type: 'pago.informar', payload: Object.assign({ anio: ANIO, monto: 18000, medio: 'Transferencia' }, payload) });
   informar({ concepto: 'cuota', mes, detalle: 'Op 123' });
@@ -354,4 +354,237 @@ test('convenios: jugadores y entrenadores proponen, la directiva publica', () =>
   assert.strictEqual(pe.estado, 'rechazado');
   C.applyAction(db, ENT, { type: 'convenio.eliminar', payload: { id: pe.id } });
   assert.ok(!db.convenios.some((c) => c.id === pe.id));
+});
+
+const APO = C.rutDesdeCuerpo(15678901);
+const SOFIA = C.rutDesdeCuerpo(24901234);
+const MARTIN = C.rutDesdeCuerpo(25123987);
+const porNombre = (db, n) => db.usuarios.find((u) => u.nombre === n);
+const firmarComo = (db, actor, hijo) => {
+  const d = db.documentos.find((x) => x.id === 'consentimiento');
+  C.applyAction(db, actor, { type: 'documento.firmar', payload: { hijo, id: d.id, aceptados: d.puntos.map((_, i) => i), nombreFirma: 'Carolina Herrera' } });
+};
+
+test('temporada: al pasar de año suben de categoría (Infantil 2do -> Cadete 1er)', () => {
+  const db = C.dbEjemplo();
+  db.config.temporada = ANIO - 1;
+  const matias = porNombre(db, 'Matías Contreras');
+  Object.assign(matias, { anioCategoria: '1', numero: 1 }); // se queda en Juvenil y usa el N° 1
+  const german = porNombre(db, 'Germán Meinas'); // Cadete 2do año, N° 1
+  const sofia = porNombre(db, 'Sofía Herrera'); // Infantil 1er año
+  const agustin = porNombre(db, 'Agustín Contreras'); // Cadete 1er año
+  db.usuarios.push({ rut: C.rutDesdeCuerpo(26111222), rol: 'jugador', nombre: 'Infantil Dos', categoria: 'Infantil Femenino', anioCategoria: '2', activo: true });
+  assert.ok(C.cambioTemporada(db, ANIO));
+  assert.deepStrictEqual([german.categoria, german.anioCategoria, german.numero], ['Juvenil Masculino', '1', null]);
+  assert.deepStrictEqual([matias.categoria, matias.anioCategoria], ['Juvenil Masculino', '2']);
+  assert.deepStrictEqual([sofia.categoria, sofia.anioCategoria], ['Infantil Femenino', '2']);
+  assert.deepStrictEqual([agustin.categoria, agustin.anioCategoria], ['Cadete Masculino', '2']);
+  const dos = porNombre(db, 'Infantil Dos');
+  assert.deepStrictEqual([dos.categoria, dos.anioCategoria], ['Cadete Femenino', '1']);
+  assert.strictEqual(db.usuarios.find((u) => u.rut === JUG).categoria, 'Primer Equipo Masculino');
+  const reg = db.cambiosTemporada.pop();
+  assert.strictEqual(reg.anio, ANIO);
+  assert.ok(reg.cambios.some((c) => c.nombre === 'Germán Meinas' && c.numeroLiberado === 1));
+  assert.strictEqual(db.config.temporada, ANIO);
+  assert.ok(!C.cambioTemporada(db, ANIO));
+  // Juvenil 2do año sube a Junior (sin año).
+  matias.anioCategoria = '2';
+  db.config.temporada = ANIO - 1;
+  C.cambioTemporada(db, ANIO);
+  assert.deepStrictEqual([matias.categoria, matias.anioCategoria], ['Junior Masculino', '']);
+});
+
+test('estadísticas por partido, comentario y tabla de goleadores', () => {
+  const db = C.dbEjemplo();
+  firmar(db, JUG);
+  const m = db.partidos.find((x) => x.rival === 'Club Balonmano Andes');
+  const renato = porNombre(db, 'Renato Flores');
+  C.applyAction(db, ENT, { type: 'partido.resultado', payload: { id: m.id, nuestro: 30, rival: 20, comentario: 'Muy bien', estadisticas: { [JUG]: { g: 9, dm: 5, am: 1 } } } });
+  assert.deepStrictEqual(m.estadisticas[JUG], { g: 9, at: 0, dm: 3, am: 1, ro: 0, az: 0 });
+  assert.strictEqual(m.comentario, 'Muy bien');
+  assert.throws(() => C.applyAction(db, JUG, { type: 'partido.resultado', payload: { id: m.id, nuestro: 1, rival: 0 } }), /permiso/);
+  const tabla = C.tablaGoleadores(db, 'Cadete Masculino', ANIO);
+  assert.strictEqual(tabla[0].nombre, 'Renato Flores');
+  assert.strictEqual(tabla[0].g, 14);
+  const v = C.viewFor(db, renato.rut);
+  assert.ok(v.goleadores.length >= 4 && v.goleadores.every((x) => x.rut === undefined));
+  assert.ok(v.goleadores.find((x) => x.esYo).g === 14);
+  assert.ok(v.partidos.every((x) => x.estadisticas === undefined && x.notas === undefined));
+  assert.strictEqual(C.viewFor(db, JUG).misEstadisticas.g, 16);
+});
+
+test('evaluación física: el entrenador registra tests y cada jugador ve los suyos', () => {
+  const db = C.dbEjemplo();
+  const renato = porNombre(db, 'Renato Flores');
+  const fecha = C.hoyISO();
+  C.applyAction(db, ENT, { type: 'evaluacion.guardar', payload: { fecha, registros: [{ rut: renato.rut, valores: { t5105: '5,1', salto: 50, peso: '' } }, { rut: JUG, valores: {} }] } });
+  const e = db.evaluaciones.filter((x) => x.rut === renato.rut && x.fecha === fecha);
+  assert.strictEqual(e.length, 1);
+  assert.deepStrictEqual(e[0].valores, { t5105: 5.1, salto: 50 });
+  C.applyAction(db, ENT, { type: 'evaluacion.guardar', payload: { fecha, registros: [{ rut: renato.rut, valores: { flex: 30 } }] } });
+  assert.deepStrictEqual(db.evaluaciones.find((x) => x.rut === renato.rut && x.fecha === fecha).valores, { flex: 30 });
+  assert.throws(() => C.applyAction(db, ENT, { type: 'evaluacion.guardar', payload: { fecha, registros: [{ rut: renato.rut, valores: { salto: 900 } }] } }), /fuera de rango/);
+  assert.throws(() => C.applyAction(db, renato.rut, { type: 'evaluacion.guardar', payload: { fecha, registros: [] } }), /permiso/);
+  assert.ok(C.viewFor(db, renato.rut).evaluaciones.every((x) => x.rut === renato.rut));
+});
+
+test('plan de entrenamiento: visible para jugadores sólo si el entrenador lo marca', () => {
+  const db = C.dbEjemplo();
+  const renato = porNombre(db, 'Renato Flores');
+  const e = db.entrenamientos.find((x) => x.fecha >= C.hoyISO() && x.categorias.includes('Cadete Masculino'));
+  const plan = [{ nombre: 'Rondo', minutos: 10 }, { nombre: '', minutos: 5 }, { nombre: 'Jugada', jugada: db.jugadas[0].id }, { nombre: 'X', jugada: 'no-existe' }];
+  C.applyAction(db, ENT, { type: 'entrenamiento.plan', payload: { id: e.id, plan, planVisible: false } });
+  assert.strictEqual(e.plan.length, 3);
+  assert.strictEqual(e.plan[2].jugada, '');
+  assert.strictEqual(C.viewFor(db, renato.rut).entrenamientos.find((x) => x.id === e.id).plan, undefined);
+  C.applyAction(db, ENT, { type: 'entrenamiento.plan', payload: { id: e.id, plan, planVisible: true } });
+  assert.strictEqual(C.viewFor(db, renato.rut).entrenamientos.find((x) => x.id === e.id).plan[1].jugada, db.jugadas[0].id);
+});
+
+test('apoderado: el menor se habilita cuando su apoderado firma; actúa por su hijo', async () => {
+  const db = C.dbEjemplo();
+  const apo = db.usuarios.find((u) => u.rut === APO);
+  assert.ok(await C.verificarClave(apo, '1567', sha256));
+  // La menor no puede usar la app ni firmar por sí misma.
+  assert.throws(() => C.applyAction(db, SOFIA, { type: 'lesion.crear', payload: { zona: 'Rodilla' } }), /apoderado debe firmar/);
+  const d = db.documentos.find((x) => x.id === 'consentimiento');
+  assert.throws(() => C.applyAction(db, SOFIA, { type: 'documento.firmar', payload: { id: d.id, aceptados: [0, 1, 2], nombreFirma: 'Sofía Herrera' } }), /apoderado firma por ti/);
+  assert.throws(() => C.applyAction(db, APO, { type: 'lesion.crear', payload: { hijo: SOFIA, zona: 'Rodilla' } }), /firma el consentimiento informado de Sofía/);
+  firmarComo(db, APO, SOFIA);
+  const f = db.firmas.find((x) => x.rut === SOFIA);
+  assert.strictEqual(f.apoderadoRut, APO);
+  C.applyAction(db, SOFIA, { type: 'lesion.crear', payload: { zona: 'Tobillo' } });
+  C.applyAction(db, APO, { type: 'lesion.crear', payload: { hijo: SOFIA, zona: 'Muñeca' } });
+  assert.deepStrictEqual(db.lesiones.filter((l) => l.rut === SOFIA).map((l) => l.zona), ['Tobillo', 'Muñeca']);
+  // Martín sigue pendiente; no puede actuar por un niño que no es suyo.
+  assert.throws(() => C.applyAction(db, APO, { type: 'lesion.crear', payload: { hijo: MARTIN, zona: 'X' } }), /consentimiento/);
+  assert.throws(() => C.applyAction(db, APO, { type: 'lesion.crear', payload: { hijo: JUG, zona: 'X' } }), /permiso/);
+  // Un adulto no lo firma el apoderado.
+  apo.hijos.push(JUG);
+  assert.throws(() => firmarComo(db, APO, JUG), /mayor de edad/);
+  // Vista: una por hijo, con su chat y sin datos de otros.
+  const v = C.viewFor(db, APO);
+  assert.deepStrictEqual(v.hijos.map((x) => x.yo).sort(), [SOFIA, MARTIN, JUG].sort());
+  assert.ok(v.hijos.every((x) => x.yoReal === APO && x.usuarios[0].rut === x.yo));
+  C.applyAction(db, APO, { type: 'chat.enviar', payload: { hilo: 'ent:' + SOFIA, texto: 'Hola, soy la mamá de Sofía' } });
+  assert.ok(C.viewFor(db, ENT).mensajes.some((m) => m.de === APO));
+  assert.ok(db.notificar.some((n) => n.para.includes(ENT)));
+});
+
+test('apoderado: se crea al inscribir a un menor y la directiva no ve la ficha médica', () => {
+  const db = C.dbEjemplo();
+  const nino = C.rutDesdeCuerpo(26333444), papa = C.rutDesdeCuerpo(14222333);
+  C.applyAction(db, ENT, { type: 'jugador.crear', payload: { rut: nino, nombre: 'Niño Nuevo', categoria: 'Mini Masculino', fechaNac: '2017-01-01', apoderadoRut: C.formatearRut(papa), apoderadoNombre: 'Papá Nuevo', apoderadoTelefono: '+56 9 1234 5678' } });
+  const a = db.usuarios.find((u) => u.rut === papa);
+  assert.deepStrictEqual([a.rol, a.hijos, a.telefono], ['apoderado', [nino], '+56 9 1234 5678']);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'apoderado.vincular', payload: { rut: nino, apoderadoRut: C.formatearRut(JUG) } }), /cuenta de jugador/);
+  C.applyAction(db, ENT, { type: 'ficha.guardar', payload: { rut: SOFIA, sangre: 'O+', alergias: 'Polen', emergencia: 'Mamá' } });
+  assert.throws(() => C.applyAction(db, DIR, { type: 'ficha.guardar', payload: { rut: SOFIA } }), /permiso/);
+  assert.ok(C.viewFor(db, DIR).usuarios.every((u) => u.medica === undefined));
+  assert.strictEqual(C.viewFor(db, ENT).usuarios.find((u) => u.rut === SOFIA).medica.alergias, 'Polen');
+  C.applyAction(db, ENT, { type: 'apoderado.desvincular', payload: { rut: nino, apoderadoRut: papa } });
+  assert.strictEqual(a.activo, false);
+});
+
+test('fotos y galería: sólo entrenadores suben, máximo 3 por álbum', () => {
+  const db = C.dbEjemplo();
+  firmar(db, JUG);
+  const img = 'data:image/jpeg;base64,' + Buffer.alloc(3000, 7).toString('base64');
+  C.applyAction(db, JUG, { type: 'foto.perfil', payload: { rut: JUG, data: img } });
+  const idFoto = db.usuarios.find((u) => u.rut === JUG).foto;
+  assert.ok(/^f[0-9a-f]{24}$/.test(idFoto) && db.fotos[idFoto] === img);
+  assert.strictEqual(C.viewFor(db, JUG).fotos, undefined);
+  assert.throws(() => C.applyAction(db, JUG, { type: 'foto.perfil', payload: { rut: JUG, data: 'data:image/svg+xml;base64,AAAA' } }), /no válida/);
+  const album = { titulo: 'Plantel 2026', fecha: C.hoyISO(), categoria: 'Primer Equipo Masculino', tipo: 'plantel', fotos: [img, img] };
+  assert.throws(() => C.applyAction(db, DIR, { type: 'galeria.guardar', payload: album }), /permiso/);
+  assert.throws(() => C.applyAction(db, JUG, { type: 'galeria.guardar', payload: album }), /permiso/);
+  C.applyAction(db, ENT, { type: 'galeria.guardar', payload: album });
+  const al = db.galeria[0];
+  assert.throws(() => C.applyAction(db, ENT, { type: 'galeria.guardar', payload: Object.assign({}, album, { id: al.id, fotos: [img, img] }) }), /Máximo 3/);
+  C.applyAction(db, ENT, { type: 'galeria.guardar', payload: Object.assign({}, album, { id: al.id, fotos: [img] }) });
+  assert.strictEqual(al.fotos.length, 3);
+  assert.ok(C.viewFor(db, JUG).galeria.some((x) => x.id === al.id));
+  assert.ok(!C.viewFor(db, SOFIA).galeria.some((x) => x.id === al.id));
+  const quitada = al.fotos[0];
+  C.applyAction(db, DIR, { type: 'galeria.quitarFoto', payload: { id: al.id, foto: quitada } });
+  assert.ok(db.fotosBorradas.includes(quitada) && !db.fotos[quitada]);
+});
+
+test('inventario: entregas con stock y material a cargo del jugador', () => {
+  const db = C.dbEjemplo();
+  firmar(db, JUG);
+  C.applyAction(db, ENT, { type: 'inventario.guardar', payload: { nombre: 'Balones nuevos', tipo: 'Balones', total: 3 } });
+  const it = db.inventario.find((x) => x.nombre === 'Balones nuevos');
+  C.applyAction(db, ENT, { type: 'prestamo.crear', payload: { itemId: it.id, rut: JUG, cantidad: 2 } });
+  assert.throws(() => C.applyAction(db, ENT, { type: 'prestamo.crear', payload: { itemId: it.id, rut: JUG, cantidad: 2 } }), /Sólo quedan 1/);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'inventario.guardar', payload: { id: it.id, nombre: 'Balones nuevos', total: 1 } }), /no puede ser menor/);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'inventario.eliminar', payload: { id: it.id } }), /devolución/);
+  assert.ok(C.viewFor(db, JUG).miMaterial.some((x) => x.nombre === 'Balones nuevos' && x.cantidad === 2));
+  assert.strictEqual(C.viewFor(db, JUG).inventario, undefined);
+  const pr = db.prestamos.find((x) => x.itemId === it.id);
+  C.applyAction(db, ENT, { type: 'prestamo.devolver', payload: { id: pr.id } });
+  assert.ok(!C.viewFor(db, JUG).miMaterial.some((x) => x.nombre === 'Balones nuevos'));
+  assert.throws(() => C.applyAction(db, JUG, { type: 'prestamo.crear', payload: { itemId: it.id, rut: JUG } }), /permiso/);
+});
+
+test('encuestas: votan los jugadores de la categoría; resultados sin nombres', () => {
+  const db = C.dbEjemplo();
+  firmar(db, JUG);
+  C.applyAction(db, DIR, { type: 'encuesta.guardar', payload: { pregunta: '¿Polera blanca o azul?', opciones: 'Blanca\nAzul', categoria: 'Primer Equipo Masculino' } });
+  const e = db.encuestas.find((x) => x.pregunta.startsWith('¿Polera'));
+  assert.throws(() => C.applyAction(db, DIR, { type: 'encuesta.guardar', payload: { pregunta: 'X', opciones: 'Una' } }), /2 opciones/);
+  C.applyAction(db, JUG, { type: 'encuesta.votar', payload: { id: e.id, opcion: 1 } });
+  C.applyAction(db, JUG, { type: 'encuesta.votar', payload: { id: e.id, opcion: 0 } });
+  assert.throws(() => C.applyAction(db, porNombre(db, 'Renato Flores').rut, { type: 'encuesta.votar', payload: { id: e.id, opcion: 0 } }), /no encontrada/);
+  const ve = C.viewFor(db, JUG).encuestas.find((x) => x.id === e.id);
+  assert.deepStrictEqual([ve.conteo, ve.total, ve.miVoto, ve.votos], [[1, 0], 1, 0, undefined]);
+  assert.strictEqual(C.viewFor(db, DIR).encuestas.find((x) => x.id === e.id).votos, undefined);
+  C.applyAction(db, DIR, { type: 'encuesta.cerrar', payload: { id: e.id } });
+  assert.throws(() => C.applyAction(db, JUG, { type: 'encuesta.votar', payload: { id: e.id, opcion: 1 } }), /cerró/);
+});
+
+test('reporte mensual y planilla Excel', () => {
+  const db = C.dbEjemplo();
+  const mes = new Date().getMonth();
+  const r = C.reporteMensual(db, ANIO, mes);
+  assert.strictEqual(r.totales.gastos, 180000);
+  assert.strictEqual(r.totales.ingresos, r.ingresos.reduce((s, x) => s + x.monto, 0));
+  assert.strictEqual(r.totales.balance, r.totales.ingresos - r.totales.gastos);
+  assert.ok(r.ingresos.some((x) => x.tipo === 'Otro ingreso' && x.monto === 120000));
+  assert.ok(r.morosos.every((m) => m.meses.length && m.deuda > 0));
+  const xlsx = C.crearXlsx([{ nombre: 'Resumen', filas: [['Concepto', 'Monto'], ['Ingresos', 1000], ['<Gastos & más>', 50]] }, { nombre: 'Hoja/2', filas: [['A']] }]);
+  assert.strictEqual(Buffer.from(xlsx.slice(0, 2)).toString(), 'PK');
+  const txt = Buffer.from(xlsx).toString('utf8');
+  assert.ok(txt.includes('&lt;Gastos &amp; más&gt;') && txt.includes('name="Hoja 2"'));
+  assert.strictEqual(C.crc32(Buffer.from('123456789')), 0xCBF43926);
+});
+
+test('recordatorios: una vez por cuota, al apoderado si el jugador es menor', () => {
+  const db = C.dbEjemplo();
+  const mes = db.config.mesesCobro.find((m) => m >= new Date().getMonth()) ?? db.config.mesesCobro[0];
+  const venc = C.hoyISO(new Date(ANIO, mes, db.config.diaVencimiento));
+  const dia = C.sumarDias(venc, -2);
+  db.usuarios.filter((u) => u.rol === 'jugador').forEach((u) => { if (db.pagos[u.rut] && db.pagos[u.rut][ANIO]) delete db.pagos[u.rut][ANIO][mes]; });
+  const lista = C.recordatoriosPendientes(db, dia);
+  assert.ok(lista.length >= 10 && lista.every((x) => x.tipo === 'antes'));
+  assert.deepStrictEqual(lista.find((x) => x.rut === SOFIA).destinatarios.map((d) => d.rut), [APO]);
+  assert.match(lista.find((x) => x.rut === SOFIA).texto, /la cuota de Sofía/);
+  lista.forEach((x) => C.marcarRecordatorio(db, x.clave));
+  assert.strictEqual(C.recordatoriosPendientes(db, dia).length, 0);
+  assert.ok(C.recordatoriosPendientes(db, C.sumarDias(venc, 2)).every((x) => x.tipo === 'atraso'));
+  assert.strictEqual(C.recordatoriosPendientes(db, C.sumarDias(venc, -10)).length, 0);
+  db.config.recordatorios.activo = false;
+  assert.strictEqual(C.recordatoriosPendientes(db, dia).length, 0);
+});
+
+test('notificaciones: citación avisa al jugador y a su apoderado', () => {
+  const db = C.dbEjemplo();
+  firmarComo(db, APO, SOFIA);
+  db.notificar = [];
+  C.applyAction(db, ENT, { type: 'partido.guardar', payload: { rival: 'Rival', categoria: 'Infantil Femenino', fecha: C.sumarDias(C.hoyISO(), 3), hora: '10:00' } });
+  const m = db.partidos.find((x) => x.rival === 'Rival');
+  C.applyAction(db, ENT, { type: 'citacion.guardar', payload: { id: m.id, ruts: [SOFIA] } });
+  assert.deepStrictEqual(db.notificar.pop().para.sort(), [SOFIA, APO].sort());
+  C.applyAction(db, APO, { type: 'citacion.responder', payload: { hijo: SOFIA, id: m.id, respuesta: 'confirmado' } });
+  assert.strictEqual(m.citados[SOFIA], 'confirmado');
 });

@@ -650,3 +650,117 @@ body.sin-sesion .toast { bottom: calc(24px + var(--seguro-abajo)); }
 .pdf-lista { font-size: 16px; margin: 18px 0 0; padding-left: 28px; columns: 2; column-gap: 32px; border-top: 1px solid #ddd; padding-top: 14px; }
 .pdf-lista li { padding: 4px 0; break-inside: avoid; }
 .pdf-pie { margin-top: 28px; font-size: 11px; color: #666; }
+
+/* ---------- Apoderado: elegir hijo o hija ---------- */
+.hijos { display: flex; gap: 8px; overflow-x: auto; padding: 10px 16px 2px; max-width: 760px; margin: 0 auto; }
+.firma .hijos { padding: 0 0 12px; justify-content: center; }
+.chip-hijo { position: relative; flex: none; display: grid; text-align: left; gap: 1px; padding: 8px 16px; border-radius: 14px; border: 1px solid var(--contorno-2); background: var(--sup-0); color: var(--texto); font: inherit; font-weight: 700; cursor: pointer; }
+.chip-hijo small { font-size: 11px; font-weight: 600; color: var(--suave); }
+.chip-hijo.activo { background: var(--primario-cont); color: var(--sobre-primario-cont); border-color: transparent; }
+.chip-hijo .punto { position: absolute; top: -6px; right: -6px; }
+
+/* ---------- Fotos, credencial ---------- */
+.foto-mini, .camiseta.foto { flex: none; width: 42px; height: 42px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 2px var(--marca-oro); background: var(--sup-3); }
+.sin-foto { display: grid; place-items: center; font-weight: 800; color: var(--suave); }
+.perfil-foto { position: relative; flex: none; width: 76px; height: 76px; border-radius: 50%; padding: 0; border: 3px solid var(--marca-oro); background: none; cursor: pointer; }
+.perfil-foto img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+.perfil-foto span { position: absolute; right: -6px; bottom: -4px; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 14px; background: var(--marca-rojo); color: #fff; font-weight: 900; font-size: 14px; display: grid; place-items: center; box-shadow: 0 0 0 2px var(--marca-oro); }
+.perfil-foto span:empty { display: none; }
+.credencial { border-radius: 20px; overflow: hidden; color: #fff; background: var(--barra-sup); box-shadow: var(--sombra-3); position: relative; }
+.credencial::after { content: ""; position: absolute; right: -30px; top: 40px; width: 170px; height: 180px; background: var(--escudo, url(escudo.png)) center/contain no-repeat; opacity: .12; pointer-events: none; }
+.cred-cab { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: rgba(0, 0, 0, .18); }
+.cred-cab img { width: 40px; }
+.cred-cab b { display: block; letter-spacing: .08em; font-size: 15px; }
+.cred-cab small { color: var(--marca-oro); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; font-size: 10px; }
+.cred-cab > span { font-size: 12px; font-weight: 700; background: var(--marca-oro); color: #271900; padding: 4px 10px; border-radius: 8px; }
+.cred-cuerpo { display: flex; gap: 16px; padding: 18px 16px 8px; align-items: center; position: relative; z-index: 1; }
+.cred-foto { flex: none; width: 104px; height: 128px; border-radius: 14px; object-fit: cover; border: 3px solid var(--marca-oro); background: rgba(255,255,255,.12); font-size: 32px; color: #fff; }
+.cred-cuerpo h3 { font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+.cred-cuerpo p { margin: 3px 0; }
+.cred-cuerpo p small { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--marca-oro); font-weight: 700; }
+.cred-cuerpo p b { font-size: 15px; }
+.cred-pie { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 16px 14px; position: relative; z-index: 1; }
+.cred-pie .insignia.ok { background: rgba(138, 217, 143, .22); color: #B5F2B8; }
+.cred-pie .insignia.mal { background: rgba(255, 90, 80, .25); color: #FFD0CC; }
+.reloj { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 700; color: rgba(255,255,255,.85); animation: latido 2s ease-in-out infinite; }
+@keyframes latido { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .reloj { animation: none; } }
+
+/* ---------- Estadísticas ---------- */
+.tabla.est tr.yo td { background: var(--primario-cont); color: var(--sobre-primario-cont); font-weight: 700; }
+.tabla td.c, .tabla th.c { text-align: center; }
+.mini-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 8px; text-align: center; }
+.mini-kpis div { background: var(--sup-2); border-radius: 12px; padding: 10px 4px; }
+.mini-kpis b { display: block; font-size: 24px; font-weight: 800; color: var(--primario); font-variant-numeric: tabular-nums; }
+.mini-kpis small { font-size: 12px; color: var(--suave); }
+.est-lista { padding: 4px 12px; }
+.est-fila { padding: 12px 0; border-bottom: 1px solid var(--contorno-2); }
+.est-fila:last-child { border-bottom: 0; }
+.est-jugo { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; cursor: pointer; }
+.est-jugo input { width: 20px; height: 20px; accent-color: var(--primario); }
+.est-jugo span { display: flex; gap: 8px; align-items: baseline; }
+.est-jugo small { color: var(--suave); }
+.eval-nombre { display: block; margin-bottom: 8px; }
+.est-campos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.est-campos label { display: grid; gap: 2px; }
+.est-campos span { font-size: 11px; font-weight: 600; color: var(--suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.est-campos input { width: 100%; min-width: 0; padding: 8px; border-radius: 10px; border: 1px solid var(--contorno-2); background: var(--sup-1); color: var(--texto); font: inherit; font-size: 16px; text-align: center; }
+.est-fila:has(.est-jugo input:not(:checked)) .est-campos { opacity: .4; }
+@media (min-width: 600px) { .est-campos { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+
+/* ---------- Gráficos de evaluación física (una serie por test) ---------- */
+.grafs { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.graf { margin: 0; background: var(--sup-1); border-radius: 14px; padding: 10px 12px 4px; }
+.graf figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 13px; color: var(--suave); }
+.graf figcaption > span { flex: 1 1 100%; font-weight: 600; }
+.graf figcaption > b { font-size: 22px; color: var(--texto); font-variant-numeric: tabular-nums; }
+.graf figcaption > b small { font-size: 13px; color: var(--suave); font-weight: 600; }
+.graf svg { display: block; width: 100%; height: auto; overflow: visible; }
+.g-base { stroke: var(--contorno-2); stroke-width: 1; }
+.g-linea { fill: none; stroke: var(--primario); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.g-marca { fill: var(--primario); stroke: var(--sup-1); stroke-width: 2; }
+.g-hit { fill: transparent; cursor: pointer; }
+.g-punto:hover .g-marca { r: 6; }
+.g-eje { font-size: 11px; fill: var(--suave); }
+.tabla-detalle { margin-top: 12px; }
+.tabla-detalle summary { cursor: pointer; font-weight: 600; color: var(--primario); padding: 6px 0; }
+
+/* ---------- Plan de entrenamiento ---------- */
+.plan-fila { margin-bottom: 10px; padding: 12px; background: var(--sup-1); box-shadow: none; }
+.plan-lista { margin: 0; padding: 4px 4px 4px 22px; }
+.plan-lista li { padding: 10px 0; border-bottom: 1px solid var(--contorno-2); }
+.plan-lista li:last-child { border-bottom: 0; }
+.plan-lista p { margin: 4px 0 6px; color: var(--suave); font-size: 14px; }
+
+/* ---------- Encuestas ---------- */
+.encuesta h3 { font-size: 17px; font-weight: 700; margin: 8px 0 10px; }
+.enc-op { padding: 6px 0; }
+.enc-op.mia span { font-weight: 700; color: var(--primario); }
+.enc-barra { height: 10px; border-radius: 6px; background: var(--sup-3); overflow: hidden; margin: 4px 0 2px; }
+.enc-barra i { display: block; height: 100%; border-radius: 6px; background: var(--primario); min-width: 2px; }
+.enc-op.mia .enc-barra i { background: var(--marca-oro); }
+.enc-votar { display: grid; gap: 8px; }
+
+/* ---------- Galería ---------- */
+.album { margin-bottom: 14px; }
+.album small { display: block; }
+.album-fotos { display: grid; gap: 6px; margin-top: 12px; grid-template-columns: repeat(3, 1fr); }
+.album-fotos.n1 { grid-template-columns: 1fr; }
+.album-fotos.n2 { grid-template-columns: 1fr 1fr; }
+.album-fotos .foto { padding: 0; border: 0; background: var(--sup-3); border-radius: 12px; overflow: hidden; aspect-ratio: 4 / 3; cursor: zoom-in; }
+.album-fotos.n1 .foto { aspect-ratio: 16 / 9; }
+.album-fotos img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.foto-grande { width: 100%; border-radius: 14px; display: block; }
+
+/* ---------- Inventario, cumpleaños ---------- */
+.c-inventario, .c-estadisticas { background: var(--primario-cont); color: var(--sobre-primario-cont); }
+.c-fisico, .c-galeria { background: var(--exito-cont); color: var(--exito); }
+.c-encuestas, .c-cumple { background: var(--terciario-cont); color: var(--sobre-terciario-cont); }
+.c-cumple b { font-size: 17px; }
+
+/* ---------- PDF del reporte ---------- */
+.pdf h2 { font-size: 16px; color: #14307A; margin: 20px 0 6px; }
+.pdf-tabla { width: 100%; border-collapse: collapse; font-size: 12px; }
+.pdf-tabla th { text-align: left; border-bottom: 2px solid #14307A; padding: 5px 4px; }
+.pdf-tabla td { border-bottom: 1px solid #ddd; padding: 4px; }
+.pdf-tabla tr { break-inside: avoid; }

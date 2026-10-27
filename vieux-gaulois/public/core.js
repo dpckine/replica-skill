@@ -10,7 +10,7 @@
   'use strict';
 
   const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-  const ROLES = ['directiva', 'entrenador', 'jugador'];
+  const ROLES = ['directiva', 'entrenador', 'jugador', 'apoderado'];
   const POSICIONES = ['Arquero', 'Extremo izquierdo', 'Lateral izquierdo', 'Central', 'Lateral derecho', 'Extremo derecho', 'Pivote'];
 
   // ---------- RUT ----------
@@ -259,14 +259,324 @@
   // Conversaciones: "dir:<id>" entre un jugador o entrenador y la directiva;
   // "ent:<rut>" entre un jugador y los entrenadores.
 
+  // El apoderado participa en las conversaciones de su hijo o hija.
   function puedeVerHilo(db, actor, hilo) {
     const m = /^(dir|ent):(.+)$/.exec(String(hilo || ''));
     if (!m) return false;
     const otro = buscarUsuario(db, m[2]);
     if (!otro) return false;
-    if (m[1] === 'dir') return otro.rol !== 'directiva' && (actor.rol === 'directiva' || actor.rut === otro.rut);
-    return otro.rol === 'jugador' && (actor.rol === 'entrenador' || actor.rut === otro.rut);
+    const propio = actor.rut === otro.rut || esApoderadoDe(actor, otro.rut);
+    if (m[1] === 'dir') return otro.rol !== 'directiva' && otro.rol !== 'apoderado' && (actor.rol === 'directiva' || propio);
+    return otro.rol === 'jugador' && (actor.rol === 'entrenador' || propio);
   }
+
+  // ---------- Apoderados ----------
+  // Los menores de 18 se inscriben con un apoderado. Su cuenta se habilita cuando
+  // el apoderado firma el consentimiento informado desde su propia cuenta.
+
+  const esMenor = (j) => !!(j && j.fechaNac && edad(j.fechaNac) < 18);
+  const esApoderadoDe = (u, rutHijo) => !!(u && u.rol === 'apoderado' && u.activo !== false && (u.hijos || []).includes(rutHijo));
+  const apoderadosDe = (db, rutHijo) => db.usuarios.filter((u) => esApoderadoDe(u, rutHijo));
+
+  // A quién avisar por un jugador: él mismo y sus apoderados.
+  function conApoderados(db, ruts) {
+    const out = new Set();
+    ruts.forEach((r) => { out.add(r); apoderadosDe(db, r).forEach((a) => out.add(a.rut)); });
+    return Array.from(out);
+  }
+
+  // ---------- Cambio de temporada ----------
+  // Al pasar de año, quien estaba en 1er año pasa a 2do; quien estaba en 2do sube a la
+  // siguiente categoría (Infantil 2do año -> Cadete 1er año), en la misma rama.
+
+  function siguienteCategoria(db, j) {
+    if (!llevaAnio(j.categoria)) return null;
+    if (j.anioCategoria === '1') return { categoria: j.categoria, anioCategoria: '2' };
+    if (j.anioCategoria !== '2') return null;
+    const bases = db.config.categoriasBase;
+    const i = bases.indexOf(baseCategoria(j.categoria));
+    if (i < 0 || i + 1 >= bases.length) return null;
+    const categoria = bases[i + 1] + ' ' + ramaCategoria(j.categoria);
+    return { categoria, anioCategoria: llevaAnio(categoria) ? '1' : '' };
+  }
+
+  // Devuelve true si hubo cambios (hay que guardar la base).
+  function cambioTemporada(db, anioActual) {
+    anioActual = anioActual || new Date().getFullYear();
+    const desde = Number(db.config.temporada) || anioActual;
+    if (desde >= anioActual) return false;
+    db.cambiosTemporada = db.cambiosTemporada || [];
+    for (let a = desde + 1; a <= anioActual; a++) {
+      const activos = db.usuarios.filter((u) => u.rol === 'jugador' && u.activo !== false);
+      const sube = new Map();
+      activos.forEach((j) => { const s = siguienteCategoria(db, j); if (s) sube.set(j.rut, s); });
+      const catFinal = (j) => (sube.has(j.rut) ? sube.get(j.rut).categoria : j.categoria);
+      const cambios = [];
+      activos.filter((j) => sube.has(j.rut)).forEach((j) => {
+        const s = sube.get(j.rut);
+        const c = { rut: j.rut, nombre: j.nombre, de: etiquetaCategoria(j) };
+        // Si al subir choca el número de camiseta con alguien de la nueva categoría, el número queda libre para asignarlo.
+        if (s.categoria !== j.categoria && j.numero != null && activos.some((o) => o !== j && catFinal(o) === s.categoria && Number(o.numero) === Number(j.numero))) {
+          c.numeroLiberado = j.numero;
+          j.numero = null;
+        }
+        Object.assign(j, s);
+        c.a = etiquetaCategoria(j);
+        cambios.push(c);
+      });
+      db.cambiosTemporada.push({ anio: a, fecha: hoyISO(), cambios });
+    }
+    db.config.temporada = anioActual;
+    return true;
+  }
+
+  // ---------- Estadísticas de partido ----------
+  // [clave, nombre, máximo por partido]
+  const CAMPOS_ESTADISTICA = [['g', 'Goles', 60], ['at', 'Atajadas', 80], ['dm', '2 min', 3], ['am', 'Amarilla', 1], ['ro', 'Roja', 1], ['az', 'Azul', 1]];
+
+  function estadisticasDe(db, filtro) {
+    const tabla = {};
+    db.partidos.filter(filtro).forEach((m) => {
+      Object.keys(m.estadisticas || {}).forEach((rut) => {
+        const t = tabla[rut] = tabla[rut] || { rut, pj: 0, g: 0, at: 0, dm: 0, am: 0, ro: 0, az: 0 };
+        t.pj++;
+        CAMPOS_ESTADISTICA.forEach(([k]) => { t[k] += Number(m.estadisticas[rut][k]) || 0; });
+      });
+    });
+    return tabla;
+  }
+
+  // Tabla de goleadores de una categoría en el año.
+  function tablaGoleadores(db, categoria, anio) {
+    const t = estadisticasDe(db, (m) => m.categoria === categoria && String(m.fecha).startsWith(String(anio)));
+    return Object.values(t).map((x) => {
+      const u = buscarUsuario(db, x.rut) || { nombre: '?' };
+      return Object.assign(x, { nombre: u.nombre, numero: u.numero == null ? null : u.numero });
+    }).sort((a, b) => b.g - a.g || a.pj - b.pj || a.nombre.localeCompare(b.nombre));
+  }
+
+  function estadisticasJugador(db, rut, anio) {
+    const t = estadisticasDe(db, (m) => String(m.fecha).startsWith(String(anio)) && m.estadisticas && m.estadisticas[rut]);
+    return t[rut] || { rut, pj: 0, g: 0, at: 0, dm: 0, am: 0, ro: 0, az: 0 };
+  }
+
+  // ---------- Evaluación física ----------
+  // [clave, nombre, unidad, mejor ("menos" = menor es mejor), mínimo, máximo]
+  const TESTS_FISICOS = [
+    ['t5105', 'Test 5-10-5', 's', 'menos', 3, 20],
+    ['salto', 'Salto alto', 'cm', 'mas', 1, 200],
+    ['flex', 'Flexiones en 30 s', 'rep.', 'mas', 0, 120],
+    ['sent', 'Sentadillas en 30 s', 'rep.', 'mas', 0, 120],
+    ['altura', 'Altura', 'cm', '', 80, 230],
+    ['peso', 'Peso', 'kg', '', 15, 200],
+  ];
+
+  // ---------- Cumpleaños ----------
+  function cumpleanosDelMes(db, mes, anio, categoria) {
+    return db.usuarios.filter((u) => u.rol === 'jugador' && u.activo !== false && u.fechaNac && Number(u.fechaNac.slice(5, 7)) === mes + 1 && (!categoria || u.categoria === categoria))
+      .map((u) => ({ rut: u.rut, nombre: u.nombre, categoria: u.categoria, dia: Number(u.fechaNac.slice(8, 10)), cumple: anio - Number(u.fechaNac.slice(0, 4)) }))
+      .sort((a, b) => a.dia - b.dia || a.nombre.localeCompare(b.nombre));
+  }
+
+  // ---------- Fotos ----------
+  // Las imágenes llegan como data URL ya comprimidas en el navegador. En la base se guarda sólo
+  // un id; el servidor mueve el contenido a archivos (ver server.js).
+  function idFoto() {
+    const a = new Uint8Array(12);
+    const c = typeof globalThis !== 'undefined' && globalThis.crypto;
+    if (c && c.getRandomValues) c.getRandomValues(a); else for (let i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256);
+    return 'f' + Array.from(a).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function guardarImagen(db, data, maxKB) {
+    const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+=*)$/.exec(String(data || ''));
+    if (!m) throw err('Imagen no válida');
+    if (m[2].length * 0.75 > maxKB * 1024) throw err('La imagen pesa más de ' + maxKB + ' KB');
+    const id = idFoto();
+    db.fotos = db.fotos || {};
+    db.fotos[id] = data;
+    return id;
+  }
+
+  function quitarImagen(db, id) {
+    if (!id) return;
+    if (db.fotos) delete db.fotos[id];
+    (db.fotosBorradas = db.fotosBorradas || []).push(id);
+  }
+
+  const MAX_FOTOS_ALBUM = 3;
+
+  // ---------- Reporte mensual de finanzas ----------
+  function reporteMensual(db, anio, mes, hoy) {
+    hoy = hoy || hoyISO();
+    const pref = anio + '-' + String(mes + 1).padStart(2, '0');
+    const enMes = (f) => String(f || '').startsWith(pref);
+    const quien = (rut) => buscarUsuario(db, rut) || { nombre: '?', categoria: '' };
+    const ingresos = [];
+    Object.keys(db.pagos).forEach((rut) => Object.keys(db.pagos[rut]).forEach((a) => Object.keys(db.pagos[rut][a]).forEach((mm) => {
+      const p = db.pagos[rut][a][mm];
+      if (p && p.pagado && enMes(p.fecha)) ingresos.push({ fecha: p.fecha, tipo: 'Cuota', detalle: 'Cuota ' + MESES[mm] + ' ' + a, nombre: quien(rut).nombre, categoria: quien(rut).categoria, medio: p.metodo || '', monto: Number(p.monto) || 0 });
+    })));
+    Object.keys(db.federativo).forEach((rut) => Object.keys(db.federativo[rut]).forEach((a) => {
+      const p = db.federativo[rut][a];
+      if (p && p.pagado && enMes(p.fecha)) ingresos.push({ fecha: p.fecha, tipo: 'Federativo', detalle: 'Federativo ' + a, nombre: quien(rut).nombre, categoria: quien(rut).categoria, medio: p.metodo || '', monto: Number(p.monto) || 0 });
+    }));
+    Object.keys(db.pagosCobro || {}).forEach((cid) => {
+      const c = (db.cobros || []).find((x) => x.id === cid);
+      Object.keys(db.pagosCobro[cid]).forEach((rut) => {
+        const p = db.pagosCobro[cid][rut];
+        if (p && p.pagado && enMes(p.fecha)) ingresos.push({ fecha: p.fecha, tipo: 'Otro cobro', detalle: c ? c.nombre : 'Cobro eliminado', nombre: quien(rut).nombre, categoria: quien(rut).categoria, medio: p.metodo || '', monto: Number(p.monto) || 0 });
+      });
+    });
+    (db.movimientos || []).filter((m) => m.tipo === 'ingreso' && enMes(m.fecha))
+      .forEach((m) => ingresos.push({ fecha: m.fecha, tipo: 'Otro ingreso', detalle: m.concepto, nombre: '', categoria: '', medio: '', monto: Number(m.monto) || 0 }));
+    const gastos = (db.movimientos || []).filter((m) => m.tipo === 'gasto' && enMes(m.fecha))
+      .map((m) => ({ fecha: m.fecha, detalle: m.concepto, monto: Number(m.monto) || 0 }));
+    // Morosos al cierre del mes (o a hoy, si el mes no ha terminado).
+    const fin = sumarDias(hoyISO(new Date(anio, mes + 1, 1)), -1);
+    const corte = fin < hoy ? fin : hoy;
+    const morosos = db.usuarios.filter((u) => u.rol === 'jugador' && u.activo !== false).map((j) => {
+      const meses = mesesAdeudados(db, j.rut, anio, corte).filter((m) => m <= mes);
+      const contacto = esMenor(j) ? apoderadosDe(db, j.rut)[0] : j;
+      return { nombre: j.nombre, categoria: etiquetaCategoria(j), meses, deuda: meses.length * cuotaDe(db, j), telefono: (contacto && contacto.telefono) || j.telefono || '' };
+    }).filter((x) => x.meses.length).sort((a, b) => b.deuda - a.deuda || a.nombre.localeCompare(b.nombre));
+    const suma = (l, f) => l.filter(f || (() => true)).reduce((s, x) => s + x.monto, 0);
+    ingresos.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    gastos.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    return {
+      anio, mes, titulo: MESES_LARGOS[mes] + ' ' + anio, ingresos, gastos, morosos,
+      totales: {
+        cuotas: suma(ingresos, (x) => x.tipo === 'Cuota'), federativos: suma(ingresos, (x) => x.tipo === 'Federativo'),
+        cobros: suma(ingresos, (x) => x.tipo === 'Otro cobro'), otros: suma(ingresos, (x) => x.tipo === 'Otro ingreso'),
+        ingresos: suma(ingresos), gastos: suma(gastos), balance: suma(ingresos) - suma(gastos),
+        morosos: morosos.length, deuda: morosos.reduce((s, x) => s + x.deuda, 0),
+      },
+    };
+  }
+
+  // ---------- Recordatorios de cuotas ----------
+  // "antes": desde N días antes del vencimiento; "atraso": hasta 7 días después, si sigue impaga.
+  // Cada recordatorio se envía una sola vez (db.recordatoriosEnviados).
+  function recordatoriosPendientes(db, hoy) {
+    const cfg = db.config.recordatorios || {};
+    if (!cfg.activo) return [];
+    hoy = hoy || hoyISO();
+    const d = new Date(hoy + 'T12:00:00');
+    const anio = d.getFullYear(), mes = d.getMonth();
+    if (!db.config.mesesCobro.includes(mes)) return [];
+    const venc = hoyISO(new Date(anio, mes, db.config.diaVencimiento));
+    let tipo = null;
+    if (hoy >= sumarDias(venc, -(Number(cfg.diasAntes) || 0)) && hoy <= venc) tipo = 'antes';
+    else if (cfg.atraso && hoy > venc && hoy <= sumarDias(venc, 7)) tipo = 'atraso';
+    if (!tipo) return [];
+    const enviados = db.recordatoriosEnviados || {};
+    return db.usuarios.filter((u) => u.rol === 'jugador' && u.activo !== false).filter((j) => {
+      if ((pagoMes(db, j.rut, anio, mes) || {}).pagado) return false;
+      if ((db.pagosInformados || []).some((x) => x.rut === j.rut && x.estado === 'pendiente' && x.concepto === 'cuota' && x.mes === mes && x.anio === anio)) return false;
+      return !enviados[[j.rut, anio, mes, tipo].join('|')];
+    }).map((j) => {
+      const menor = esMenor(j);
+      const aps = apoderadosDe(db, j.rut);
+      const destinatarios = (menor && aps.length ? aps : [j]).map((u) => ({ rut: u.rut, nombre: u.nombre, telefono: u.telefono || '', email: u.email || '' }));
+      const monto = cuotaDe(db, j);
+      const fecha = venc.slice(8, 10) + '/' + venc.slice(5, 7);
+      const de = menor ? 'la cuota de ' + j.nombre.split(/\s+/)[0] : 'tu cuota';
+      const texto = tipo === 'antes'
+        ? 'te recordamos que ' + de + ' de ' + MESES_LARGOS[mes].toLowerCase() + ' (' + pesos(monto) + ') vence el ' + fecha + '.'
+        : 'te contamos que ' + de + ' de ' + MESES_LARGOS[mes].toLowerCase() + ' (' + pesos(monto) + ') venció el ' + fecha + ' y aún aparece pendiente.';
+      return {
+        clave: [j.rut, anio, mes, tipo].join('|'), tipo, rut: j.rut, nombre: j.nombre, anio, mes, monto, vence: venc, destinatarios,
+        titulo: tipo === 'antes' ? 'Cuota por vencer' : 'Cuota atrasada',
+        texto: 'Hola, ' + texto + ' Puedes pagar e informar el pago en la app de Vieux Gaulois. ¡Gracias!',
+      };
+    });
+  }
+
+  function marcarRecordatorio(db, clave) {
+    db.recordatoriosEnviados = db.recordatoriosEnviados || {};
+    db.recordatoriosEnviados[clave] = hoyISO();
+  }
+
+  const pesos = (n) => '$' + String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const MESES_LARGOS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+  // ---------- Planilla Excel (.xlsx) ----------
+  // Arma un .xlsx mínimo (zip sin compresión) con una hoja por tabla. hojas = [{ nombre, filas: [[celda...]] }]
+  // La primera fila de cada hoja va en negrita; los números quedan como números.
+  function crearXlsx(hojas) {
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+    const col = (i) => { let s = ''; i++; while (i) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = Math.floor((i - 1) / 26); } return s; };
+    const hoja = (filas) => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+      filas.map((f, r) => '<row r="' + (r + 1) + '">' + f.map((v, c) => {
+        const ref = col(c) + (r + 1);
+        const st = r === 0 ? ' s="1"' : typeof v === 'number' ? ' s="2"' : '';
+        if (typeof v === 'number' && Number.isFinite(v)) return '<c r="' + ref + '"' + st + '><v>' + v + '</v></c>';
+        if (v == null || v === '') return '';
+        return '<c r="' + ref + '" t="inlineStr"' + st + '><is><t xml:space="preserve">' + esc(v) + '</t></is></c>';
+      }).join('') + '</row>').join('') + '</sheetData></worksheet>';
+    const nombres = hojas.map((x, i) => esc(String(x.nombre || 'Hoja ' + (i + 1)).replace(/[\\/?*[\]:]/g, ' ').slice(0, 31)));
+    const archivos = [
+      ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+        hojas.map((_, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('') + '</Types>'],
+      ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+      ['xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
+        nombres.map((n, i) => '<sheet name="' + n + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join('') + '</sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        hojas.map((_, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join('') +
+        '<Relationship Id="rId' + (hojas.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+      ['xl/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'],
+    ].concat(hojas.map((x, i) => ['xl/worksheets/sheet' + (i + 1) + '.xml', hoja(x.filas)]));
+    return zipSinCompresion(archivos);
+  }
+
+  const CRC_TABLA = (() => {
+    const t = [];
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t.push(c >>> 0); }
+    return t;
+  })();
+  function crc32(bytes) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) c = CRC_TABLA[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function utf8(s) {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s);
+    return Uint8Array.from(Buffer.from(s, 'utf8'));
+  }
+
+  function zipSinCompresion(archivos) {
+    const partes = [], central = [];
+    let off = 0;
+    const u16 = (v) => [v & 0xFF, (v >>> 8) & 0xFF];
+    const u32 = (v) => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
+    archivos.forEach(([nombre, contenido]) => {
+      const n = utf8(nombre), d = utf8(contenido), crc = crc32(d);
+      // versión 20, bit 11 = nombres en UTF-8, método 0 (sin compresión), fecha 1/1/2020
+      const comun = [].concat(u16(20), u16(0x0800), u16(0), u16(0), u16(0x5021), u32(crc), u32(d.length), u32(d.length), u16(n.length), u16(0));
+      const local = Uint8Array.from([].concat(u32(0x04034b50), comun));
+      partes.push(local, n, d);
+      central.push(Uint8Array.from([].concat(u32(0x02014b50), u16(20), comun, u16(0), u16(0), u16(0), u32(0), u32(off))), n);
+      off += local.length + n.length + d.length;
+    });
+    const tamCentral = central.reduce((s, x) => s + x.length, 0);
+    const fin = Uint8Array.from([].concat(u32(0x06054b50), u16(0), u16(0), u16(archivos.length), u16(archivos.length), u32(tamCentral), u32(off), u16(0)));
+    const total = partes.concat(central, [fin]);
+    const out = new Uint8Array(total.reduce((s, x) => s + x.length, 0));
+    let p = 0;
+    total.forEach((x) => { out.set(x, p); p += x.length; });
+    return out;
+  }
+
+  // ---------- Notificaciones ----------
+  // applyAction deja en db.notificar lo que hay que avisar; el servidor lo envía (push) y lo vacía.
+  function notificar(db, para, titulo, cuerpo, tab) {
+    const ruts = Array.from(new Set(para)).filter(Boolean);
+    if (!ruts.length) return;
+    (db.notificar = db.notificar || []).push({ para: ruts, titulo: String(titulo).slice(0, 80), cuerpo: String(cuerpo || '').slice(0, 180), tab: tab || '' });
+  }
+
+  const jugadoresDeCategoria = (db, categoria) => db.usuarios.filter((u) => u.rol === 'jugador' && u.activo !== false && (!categoria || u.categoria === categoria)).map((u) => u.rut);
 
   // ---------- Convocatoria: cuerpo técnico ----------
   const CUERPO_TECNICO = [
@@ -307,8 +617,15 @@
   function migrar(db) {
     const base = dbVacia();
     if (db.version >= base.version) return db;
-    ['avisos', 'firmas', 'movimientos', 'convenios', 'cobros', 'pagosInformados', 'mensajes', 'jugadas'].forEach((k) => { db[k] = db[k] || []; });
-    db.pagosCobro = db.pagosCobro || {};
+    ['avisos', 'firmas', 'movimientos', 'convenios', 'cobros', 'pagosInformados', 'mensajes', 'jugadas',
+      'evaluaciones', 'inventario', 'prestamos', 'encuestas', 'galeria', 'cambiosTemporada'].forEach((k) => { db[k] = db[k] || []; });
+    ['pagosCobro', 'fotos', 'recordatoriosEnviados'].forEach((k) => { db[k] = db[k] || {}; });
+    // Contacto de emergencia y previsión pasan a la ficha médica.
+    db.usuarios.forEach((u) => {
+      if (u.rol !== 'jugador' || u.medica) return;
+      u.medica = { emergencia: u.contactoEmergencia || '', prevision: u.prevision || '' };
+      delete u.contactoEmergencia; delete u.prevision;
+    });
     db.documentos = db.documentos || base.documentos;
     Object.keys(base.config).forEach((k) => { if (db.config[k] == null) db.config[k] = base.config[k]; });
     if (!db.config.categoriasBase || !db.config.categoriasBase.length) {
@@ -325,7 +642,7 @@
   function dbVacia() {
     const anio = new Date().getFullYear();
     return {
-      version: 4,
+      version: 5,
       config: {
         club: 'Vieux Gaulois Handball',
         temporada: anio,
@@ -340,6 +657,7 @@
         datosTransferencia: '',
         medios: { cuota: { link: true, transferencia: true }, federativo: { link: true, transferencia: true } },
         indicacionesCitacion: 'Llevar carnet, calcetas negras, short negro, botella de agua y toalla de mano.',
+        recordatorios: { activo: true, diasAntes: 3, atraso: true, push: true, correo: true, whatsapp: false },
       },
       usuarios: [Object.assign({ creado: hoyISO() }, CUENTA_DIRECTIVA)],
       pagos: {},
@@ -357,6 +675,14 @@
       pagosInformados: [],
       mensajes: [],
       jugadas: [],
+      evaluaciones: [],
+      inventario: [],
+      prestamos: [],
+      encuestas: [],
+      galeria: [],
+      fotos: {},
+      cambiosTemporada: [],
+      recordatoriosEnviados: {},
     };
   }
 
@@ -384,19 +710,29 @@
       jugadorRut: rutDesdeCuerpo(20123456), claveHash: 'd355c072d67c4714eb6120152e17fad62ced7f0190ad54dce3532321967ea1cb', // tomas1234
     });
     const PE = 'Primer Equipo Masculino', CAD = 'Cadete Masculino';
+    // Dos cumpleaños caen en el mes actual, para verlos en el inicio.
+    const mesHoy = String(new Date().getMonth() + 1).padStart(2, '0');
+    const diaCumple = String(Math.min(28, new Date().getDate() + 3)).padStart(2, '0');
     const jugadores = [
       add(20123456, { nombre: 'Tomás Rojas', rol: 'jugador', fechaNac: '2001-04-12', categoria: PE, numero: 7, posicion: 'Central', telefono: '+56 9 3333 3333' }),
       add(19876543, { nombre: 'Diego Muñoz', rol: 'jugador', fechaNac: '1998-09-03', categoria: PE, numero: 1, posicion: 'Arquero' }),
       add(21345678, { nombre: 'Benjamín Soto', rol: 'jugador', fechaNac: '2003-01-25', categoria: 'Adultos B Masculino', numero: 10, posicion: 'Lateral izquierdo' }),
-      add(18765432, { nombre: 'Camila Fuentes', rol: 'jugador', fechaNac: '1996-11-30', categoria: 'Primer Equipo Femenino', numero: 9, posicion: 'Pivote' }),
+      add(18765432, { nombre: 'Camila Fuentes', rol: 'jugador', fechaNac: '1996-' + mesHoy + '-05', categoria: 'Primer Equipo Femenino', numero: 9, posicion: 'Pivote' }),
       add(20555666, { nombre: 'Valentina Araya', rol: 'jugador', fechaNac: '2000-06-18', categoria: 'Primer Equipo Femenino', numero: 14, posicion: 'Extremo derecho', descuento: 50 }),
       add(23456789, { nombre: 'Matías Contreras', rol: 'jugador', fechaNac: '2008-03-08', categoria: 'Juvenil Masculino', anioCategoria: '2', numero: 5, posicion: 'Extremo izquierdo' }),
       add(24567890, { nombre: 'Germán Meinas', rol: 'jugador', fechaNac: '2010-02-11', categoria: CAD, anioCategoria: '2', numero: 1, posicion: 'Arquero' }),
       add(24678901, { nombre: 'Renato Flores', rol: 'jugador', fechaNac: '2010-07-21', categoria: CAD, anioCategoria: '2', numero: 4, posicion: 'Central' }),
       add(24789012, { nombre: 'Agustín Contreras', rol: 'jugador', fechaNac: '2011-03-02', categoria: CAD, anioCategoria: '1', numero: 8, posicion: 'Pivote' }),
-      add(24890123, { nombre: 'Benjamín Aguayo', rol: 'jugador', fechaNac: '2011-09-15', categoria: CAD, anioCategoria: '1', numero: 11, posicion: 'Extremo derecho' }),
+      add(24890123, { nombre: 'Benjamín Aguayo', rol: 'jugador', fechaNac: '2011-' + mesHoy + '-' + diaCumple, categoria: CAD, anioCategoria: '1', numero: 11, posicion: 'Extremo derecho' }),
       add(24901234, { nombre: 'Sofía Herrera', rol: 'jugador', fechaNac: '2012-05-30', categoria: 'Infantil Femenino', anioCategoria: '1', numero: 6, posicion: 'Lateral derecho' }),
+      add(25123987, { nombre: 'Martín Herrera', rol: 'jugador', fechaNac: '2016-08-20', categoria: 'Mini Masculino', numero: 3, posicion: 'Extremo izquierdo' }),
     ];
+    // Apoderada de Sofía y Martín: los menores quedan habilitados cuando ella firma el consentimiento.
+    add(15678901, { nombre: 'Carolina Herrera', rol: 'apoderado', telefono: '+56 9 4444 5555', email: 'carolina.herrera@example.com', hijos: [jugadores[10].rut, jugadores[11].rut] });
+    const ficha = (j, m) => { j.medica = Object.assign({ sangre: '', alergias: '', condiciones: '', medicamentos: '', seguro: '', prevision: '', emergencia: '', obs: '' }, m); };
+    ficha(jugadores[0], { sangre: 'O+', alergias: 'Penicilina', prevision: 'Fonasa', seguro: 'Seguro deportivo Federación', emergencia: 'María Rojas (madre) +56 9 1111 2222' });
+    ficha(jugadores[6], { sangre: 'A+', condiciones: 'Asma leve', medicamentos: 'Salbutamol antes de entrenar', prevision: 'Isapre Colmena', seguro: 'Seguro escolar', emergencia: 'Pedro Meinas (padre) +56 9 6666 1234' });
+    ficha(jugadores[10], { sangre: 'B+', alergias: 'Maní', prevision: 'Fonasa', seguro: 'Seguro escolar', emergencia: 'Carolina Herrera (madre) +56 9 4444 5555' });
 
     const mesActual = new Date().getMonth();
     jugadores.forEach((j, i) => {
@@ -409,8 +745,8 @@
       if (i !== 2 && i !== 5 && i !== 9) {
         db.federativo[j.rut] = { [anio]: { pagado: true, monto: db.config.montoFederativo, fecha: hoyISO(new Date(anio, 2, 15)) } };
       }
-      // Todos firmaron el consentimiento menos Tomás, para ver la firma al ingresar.
-      if (i !== 0) {
+      // Todos firmaron el consentimiento menos Tomás (firma al ingresar) y los hijos de Carolina (firma ella).
+      if (i !== 0 && i !== 10 && i !== 11) {
         db.firmas.push({ id: uid(), rut: j.rut, documentoId: 'consentimiento', version: 1, fecha: hoyISO(new Date(anio, 2, 1)), nombreFirma: j.nombre, apoderado: edad(j.fechaNac) < 18 ? 'Apoderado de ' + j.nombre.split(' ')[0] : '' });
       }
     });
@@ -469,6 +805,19 @@
       id: uid(), fecha: sumarDias(hoy, -6), hora: '19:00', rival: 'Handball Sur', lugar: 'Gimnasio Municipal',
       condicion: 'Local', competicion: 'Liga Metropolitana', categoria: PE, vestimenta: 'Blancas', indicaciones: db.config.indicacionesCitacion,
       citados: ruts([[jugadores[0], 'confirmado'], [jugadores[1], 'confirmado']]), presentacion: '18:00', resultado: { nuestro: 28, rival: 24 }, citacionFecha: sumarDias(hoy, -9), citadoPor: 'usr:jorge',
+      comentario: 'Gran segundo tiempo: la defensa 6:0 cerró los espacios y Diego atajó dos penales.',
+      estadisticas: { [jugadores[0].rut]: { g: 7, at: 0, dm: 1, am: 1, ro: 0, az: 0 }, [jugadores[1].rut]: { g: 0, at: 14, dm: 0, am: 0, ro: 0, az: 0 } },
+    });
+    // Dos fechas jugadas de Cadetes con estadísticas, para la tabla de goleadores.
+    [[-20, 'Liceo Alemán', 22, 25, [[6, 0, 9], [7, 6, 0], [8, 5, 0], [9, 3, 0]]], [-13, 'Club Andino', 27, 21, [[6, 0, 13], [7, 8, 0], [8, 4, 0], [9, 6, 0]]]].forEach(([dias, rival, a, b, est]) => {
+      const e = {};
+      est.forEach(([k, g, at]) => { e[jugadores[k].rut] = { g, at, dm: k === 8 && dias === -20 ? 1 : 0, am: 0, ro: 0, az: 0 }; });
+      db.partidos.push({
+        id: uid(), fecha: sumarDias(hoy, dias), hora: '16:00', rival, lugar: 'Gimnasio Colegio', condicion: 'Local', competicion: 'Liga Regional', categoria: CAD, vestimenta: 'Negras',
+        indicaciones: db.config.indicacionesCitacion, citados: ruts(est.map(([k]) => [jugadores[k], 'confirmado'])), presentacion: '15:00', resultado: { nuestro: a, rival: b },
+        citacionFecha: sumarDias(hoy, dias - 4), citadoPor: 'usr:jorge', estadisticas: e,
+        comentario: a > b ? 'Buen partido colectivo, muy rápidos en el contraataque.' : 'Nos faltó intensidad en defensa. A corregir en la semana.',
+      });
     });
 
     db.avisos.push(
@@ -522,10 +871,58 @@
       ],
     });
 
+    // Plan del próximo entrenamiento de Cadetes, con la jugada de ejemplo adjunta.
+    const proxCad = db.entrenamientos.filter((e) => e.fecha >= hoy && e.categorias.includes(CAD)).sort((a, b) => a.fecha.localeCompare(b.fecha))[0];
+    if (proxCad) {
+      proxCad.planVisible = true;
+      proxCad.plan = [
+        { nombre: 'Calentamiento con balón', minutos: 15, detalle: 'Trote, movilidad y pases en parejas.', jugada: '' },
+        { nombre: 'Circuito 5-10-5 y saltos', minutos: 15, detalle: '3 series, pausa de 1 minuto.', jugada: '' },
+        { nombre: 'Cruce central - lateral derecho', minutos: 25, detalle: 'Primero sin defensa, luego contra 6:0.', jugada: db.jugadas[0].id },
+        { nombre: 'Partido 6 contra 6', minutos: 15, detalle: 'Gol de cruce vale doble.', jugada: '' },
+      ];
+    }
+
+    // Evaluaciones físicas de Cadetes hace dos meses y esta semana; se ve la evolución.
+    const evalua = (j, dias, v) => db.evaluaciones.push({ id: uid(), rut: j.rut, fecha: sumarDias(hoy, dias), autor: 'usr:jorge', valores: v });
+    [[6, 6.1, 38, 18, 24, 168, 61], [7, 5.6, 45, 25, 30, 172, 63], [8, 5.9, 41, 20, 27, 160, 52], [9, 5.8, 43, 22, 28, 158, 49]].forEach(([k, t, sa, fl, se, al, pe]) => {
+      evalua(jugadores[k], -60, { t5105: t, salto: sa, flex: fl, sent: se, altura: al, peso: pe });
+      evalua(jugadores[k], -30, { t5105: Math.round((t - 0.2) * 100) / 100, salto: sa + 2, flex: fl + 3, sent: se + 2, altura: al + 1, peso: pe + 0.5 });
+      evalua(jugadores[k], -3, { t5105: Math.round((t - 0.35) * 100) / 100, salto: sa + 4, flex: fl + 5, sent: se + 4, altura: al + 1, peso: pe + 1 });
+    });
+    evalua(jugadores[4], -40, { t5105: 5.4, salto: 44, flex: 20, sent: 29, altura: 168, peso: 60 });
+    evalua(jugadores[4], -5, { t5105: 5.2, salto: 47, flex: 24, sent: 32, altura: 168, peso: 59 });
+
+    // Inventario y material entregado.
+    const item = (nombre, tipo, total) => { const x = { id: uid(), nombre, tipo, total, notas: '' }; db.inventario.push(x); return x; };
+    const bal3 = item('Balones talla 3', 'Balones', 20), bal2 = item('Balones talla 2', 'Balones', 15);
+    const petos = item('Petos de entrenamiento', 'Petos', 30), cam = item('Camisetas oficiales', 'Camisetas', 40);
+    item('Conos', 'Otros', 50);
+    const presta = (it, rut, cantidad, dias, nota) => db.prestamos.push({ id: uid(), itemId: it.id, rut, cantidad, fecha: sumarDias(hoy, dias), nota, por: 'usr:jorge', devuelto: null });
+    presta(cam, jugadores[0].rut, 1, -50, 'Camiseta N° 7');
+    presta(cam, jugadores[6].rut, 1, -50, 'Camiseta N° 1 arquero');
+    presta(bal3, 'usr:jorge', 6, -10, 'Para entrenamiento de Cadetes');
+    presta(petos, 'usr:jorge', 12, -10, '');
+    presta(bal2, jugadores[10].rut, 1, -8, 'Para practicar en casa');
+
+    // Encuestas.
+    db.encuestas.push({
+      id: uid(), pregunta: '¿Qué día prefieren para el entrenamiento extra?', opciones: ['Lunes', 'Miércoles', 'Sábado en la mañana'], categoria: CAD,
+      cierre: sumarDias(hoy, 6), autor: 'usr:jorge', fecha: sumarDias(hoy, -1), cerrada: false,
+      votos: { [jugadores[6].rut]: 2, [jugadores[8].rut]: 1 },
+    });
+    db.encuestas.push({
+      id: uid(), pregunta: '¿Hacemos convivencia de fin de temporada con las familias?', opciones: ['Sí, en diciembre', 'Sí, en enero', 'No por ahora'], categoria: '',
+      cierre: sumarDias(hoy, 12), autor: 'usr:vieux', fecha: sumarDias(hoy, -2), cerrada: false,
+      votos: { [jugadores[1].rut]: 0, [jugadores[3].rut]: 0, [jugadores[4].rut]: 1, [jugadores[7].rut]: 0 },
+    });
+
     db.movimientos.push(
       { id: uid(), fecha: hoyISO(new Date(anio, 2, 1)), tipo: 'gasto', concepto: 'Arriendo gimnasio marzo', monto: 180000 },
       { id: uid(), fecha: hoyISO(new Date(anio, 3, 10)), tipo: 'ingreso', concepto: 'Auspicio Ferretería Central', monto: 300000 },
-      { id: uid(), fecha: hoyISO(new Date(anio, 4, 2)), tipo: 'gasto', concepto: 'Balones y conos', monto: 95000 }
+      { id: uid(), fecha: hoyISO(new Date(anio, 4, 2)), tipo: 'gasto', concepto: 'Balones y conos', monto: 95000 },
+      { id: uid(), fecha: hoyISO(new Date(anio, new Date().getMonth(), 1)), tipo: 'gasto', concepto: 'Arriendo gimnasio ' + MESES_LARGOS[new Date().getMonth()].toLowerCase(), monto: 180000 },
+      { id: uid(), fecha: hoyISO(new Date(anio, new Date().getMonth(), 2)), tipo: 'ingreso', concepto: 'Rifa pro viaje Cadetes', monto: 120000 }
     );
     return db;
   }
@@ -591,9 +988,28 @@
       posicion: texto(p.posicion, 40),
       telefono: texto(p.telefono, 30),
       email: texto(p.email, 80),
-      contactoEmergencia: texto(p.contactoEmergencia, 120),
-      prevision: texto(p.prevision, 60),
     });
+  }
+
+  // Crea la cuenta del apoderado (entra con su RUT y los 4 primeros dígitos) o le suma este hijo o hija.
+  function vincularApoderado(db, rutHijo, p) {
+    const lleno = [p.apoderadoRut, p.apoderadoNombre].some((v) => String(v || '').trim());
+    if (!lleno) return;
+    const rut = normalizarRut(p.apoderadoRut);
+    if (!rut) throw err('RUT del apoderado no válido');
+    if (rut === rutHijo) throw err('El apoderado debe ser otra persona');
+    let a = buscarUsuario(db, rut);
+    if (a && a.rol !== 'apoderado') throw err('Ese RUT ya tiene una cuenta de ' + a.rol + ' en el club');
+    const datos = { telefono: texto(p.apoderadoTelefono, 30), email: texto(p.apoderadoEmail, 80) };
+    if (!a) {
+      const nombre = texto(p.apoderadoNombre, 80);
+      if (!nombre) throw err('Indica el nombre del apoderado');
+      a = { rut, rol: 'apoderado', nombre, hijos: [], activo: true, creado: hoyISO() };
+      db.usuarios.push(a);
+    } else if (texto(p.apoderadoNombre, 80)) a.nombre = texto(p.apoderadoNombre, 80);
+    Object.keys(datos).forEach((k) => { if (datos[k]) a[k] = datos[k]; });
+    a.activo = true;
+    if (!a.hijos.includes(rutHijo)) a.hijos.push(rutHijo);
   }
 
   // Sólo se aceptan links web (evita "javascript:" y similares).
@@ -623,10 +1039,21 @@
     const exigir = (ok) => { if (!ok) throw err('No tienes permiso para esta acción'); };
     const anio = num(p.anio, 2000, 2100);
 
-    // El jugador debe firmar el consentimiento antes de usar la app.
-    if (rol === 'jugador' && action && action.type !== 'documento.firmar'
-      && documentosPendientes(db, actor.rut).some((d) => d.id === 'consentimiento')) {
-      throw err('Primero debes firmar el consentimiento informado');
+    // El apoderado actúa por uno de sus hijos (payload.hijo); el jugador, por sí mismo.
+    const esJug = rol === 'jugador' || rol === 'apoderado';
+    let quien = actor;
+    if (rol === 'apoderado') {
+      const hijos = actor.hijos || [];
+      const hijo = p.hijo || (hijos.length === 1 ? hijos[0] : '');
+      if (hijo) { exigir(hijos.includes(hijo)); quien = buscarJugador(db, hijo); }
+    }
+    const jug = () => { exigir(esJug && quien.rol === 'jugador'); return quien; };
+
+    // El consentimiento debe estar firmado antes de usar la app. Si el jugador es menor, lo firma su apoderado.
+    if (esJug && quien.rol === 'jugador' && action && action.type !== 'documento.firmar'
+      && documentosPendientes(db, quien.rut).some((d) => d.id === 'consentimiento')) {
+      throw err(rol === 'apoderado' ? 'Primero firma el consentimiento informado de ' + quien.nombre.split(/\s+/)[0]
+        : esMenor(quien) ? 'Tu apoderado debe firmar el consentimiento informado desde su cuenta' : 'Primero debes firmar el consentimiento informado');
     }
 
     switch (action && action.type) {
@@ -640,21 +1067,62 @@
         datosJugador(db, p, j);
         if (esDir) j.descuento = num(p.descuento, 0, 100) || 0;
         db.usuarios.push(j);
+        vincularApoderado(db, rut, p);
         break;
       }
       case 'jugador.editar': {
+        // El apoderado también actualiza su propio teléfono y email.
+        if (rol === 'apoderado' && p.rut === actor.rut) {
+          actor.telefono = texto(p.telefono, 30);
+          actor.email = texto(p.email, 80);
+          break;
+        }
         const j = buscarJugador(db, p.rut);
         if (esStaff) {
           datosJugador(db, Object.assign({}, j, p), j);
           if (esDir && p.descuento != null) j.descuento = num(p.descuento, 0, 100) || 0;
+          vincularApoderado(db, j.rut, p);
         } else {
-          exigir(actor.rut === j.rut);
-          // El jugador sólo puede editar sus datos de contacto.
+          exigir(jug().rut === j.rut);
+          // El jugador (o su apoderado) sólo puede editar sus datos de contacto.
           j.telefono = texto(p.telefono, 30);
           j.email = texto(p.email, 80);
-          j.contactoEmergencia = texto(p.contactoEmergencia, 120);
-          j.prevision = texto(p.prevision, 60);
         }
+        break;
+      }
+      case 'apoderado.vincular': {
+        exigir(esStaff);
+        const j = buscarJugador(db, p.rut);
+        if (!String(p.apoderadoRut || '').trim()) throw err('Indica el RUT del apoderado');
+        vincularApoderado(db, j.rut, p);
+        break;
+      }
+      case 'apoderado.desvincular': {
+        exigir(esStaff);
+        const a = buscarUsuario(db, p.apoderadoRut);
+        if (!a || a.rol !== 'apoderado') throw err('Apoderado no encontrado');
+        a.hijos = (a.hijos || []).filter((r) => r !== p.rut);
+        if (!a.hijos.length) a.activo = false;
+        break;
+      }
+      // Ficha médica: la ven y editan el cuerpo técnico, el jugador y su apoderado (no la directiva).
+      case 'ficha.guardar': {
+        const j = buscarJugador(db, p.rut);
+        exigir(rol === 'entrenador' || (esJug && jug().rut === j.rut));
+        j.medica = {
+          sangre: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].includes(p.sangre) ? p.sangre : '',
+          alergias: texto(p.alergias, 200), condiciones: texto(p.condiciones, 200), medicamentos: texto(p.medicamentos, 200),
+          seguro: texto(p.seguro, 100), prevision: texto(p.prevision, 60), emergencia: texto(p.emergencia, 120), obs: texto(p.obs, 300),
+          actualizada: hoyISO(),
+        };
+        break;
+      }
+      case 'foto.perfil': {
+        const j = buscarJugador(db, p.rut);
+        exigir(esStaff || (esJug && jug().rut === j.rut));
+        const id = p.data ? guardarImagen(db, p.data, 150) : null;
+        quitarImagen(db, j.foto);
+        if (id) j.foto = id; else delete j.foto;
         break;
       }
       case 'jugador.activo': {
@@ -699,15 +1167,16 @@
       }
       case 'clave.resetear': {
         exigir(esDir);
-        // Sólo jugadores: su clave vuelve a ser los 4 primeros dígitos del RUT.
-        const u = buscarJugador(db, p.rut);
+        // Jugadores y apoderados: la clave vuelve a ser los 4 primeros dígitos del RUT.
+        const u = buscarUsuario(db, p.rut);
+        if (!u || !['jugador', 'apoderado'].includes(u.rol)) throw err('Usuario no encontrado');
         delete u.claveHash;
         break;
       }
 
       // ----- Lesiones y molestias -----
       case 'lesion.crear': {
-        const rut = rol === 'jugador' ? actor.rut : p.rut;
+        const rut = esJug ? jug().rut : p.rut;
         buscarJugador(db, rut);
         const zona = texto(p.zona, 60);
         if (!zona) throw err('Indica la zona del cuerpo');
@@ -722,7 +1191,7 @@
       case 'lesion.editar': {
         const l = db.lesiones.find((x) => x.id === p.id);
         if (!l) throw err('Registro no encontrado');
-        exigir(esStaff || l.rut === actor.rut);
+        exigir(esStaff || (esJug && l.rut === quien.rut));
         if (p.zona != null) l.zona = texto(p.zona, 60) || l.zona;
         if (p.tipo != null && ['Lesión', 'Dolor', 'Molestia'].includes(p.tipo)) l.tipo = p.tipo;
         if (p.intensidad != null) l.intensidad = num(p.intensidad, 1, 10) || l.intensidad;
@@ -762,6 +1231,18 @@
             db.entrenamientos.push(Object.assign({ id: uid(), asistenciaTomada: false, asistencia: {} }, datos, { fecha: sumarDias(datos.fecha, s * 7) }));
           }
         }
+        break;
+      }
+      // Plan de la sesión: ejercicios con minutos, detalle y, si se quiere, una jugada de la pizarra.
+      case 'entrenamiento.plan': {
+        exigir(esStaff);
+        const e = db.entrenamientos.find((x) => x.id === p.id);
+        if (!e) throw err('Entrenamiento no encontrado');
+        e.plan = (Array.isArray(p.plan) ? p.plan : []).slice(0, 20).map((x) => ({
+          nombre: texto(x && x.nombre, 80), minutos: num(x && x.minutos, 0, 300) || 0, detalle: texto(x && x.detalle, 300),
+          jugada: x && x.jugada && db.jugadas.some((jg) => jg.id === x.jugada) ? x.jugada : '',
+        })).filter((x) => x.nombre);
+        e.planVisible = !!p.planVisible;
         break;
       }
       case 'entrenamiento.eliminar': {
@@ -811,6 +1292,18 @@
         if (!m) throw err('Partido no encontrado');
         const a = num(p.nuestro, 0, 200), b = num(p.rival, 0, 200);
         m.resultado = a == null || b == null || p.nuestro === '' || p.rival === '' ? null : { nuestro: a, rival: b };
+        if (p.comentario != null) m.comentario = texto(p.comentario, 600);
+        // Estadísticas: { rut: { g, at, dm, am, ro, az } } sólo de quienes jugaron.
+        if (p.estadisticas && typeof p.estadisticas === 'object') {
+          const est = {};
+          Object.keys(p.estadisticas).slice(0, 40).forEach((rut) => {
+            buscarJugador(db, rut);
+            const fila = {};
+            CAMPOS_ESTADISTICA.forEach(([k, , max]) => { fila[k] = num(p.estadisticas[rut] && p.estadisticas[rut][k], 0, max) || 0; });
+            est[rut] = fila;
+          });
+          m.estadisticas = est;
+        }
         break;
       }
       case 'partido.eliminar': {
@@ -827,7 +1320,12 @@
           buscarJugador(db, rut);
           nuevos[rut] = m.citados[rut] || 'pendiente';
         });
+        const recien = Object.keys(nuevos).filter((r) => !m.citados[r]);
         m.citados = nuevos;
+        if (m.fecha >= hoyISO()) {
+          notificar(db, conApoderados(db, recien), 'Convocatoria: ' + m.categoria + ' vs ' + m.rival,
+            'Fecha ' + m.fecha.split('-').reverse().slice(0, 2).join('/') + (m.hora ? ' ' + m.hora + ' hrs' : '') + '. Confirma tu asistencia en la app.', 'perfil');
+        }
         if (p.cuerpoTecnico && typeof p.cuerpoTecnico === 'object') {
           // Sólo quedan en la convocatoria los cargos con nombre.
           const ct = {};
@@ -839,10 +1337,10 @@
         break;
       }
       case 'citacion.responder': {
-        exigir(rol === 'jugador');
+        const j = jug();
         const m = db.partidos.find((x) => x.id === p.id);
-        if (!m || !m.citados[actor.rut]) throw err('No estás citado a este partido');
-        m.citados[actor.rut] = p.respuesta === 'confirmado' ? 'confirmado' : 'rechazado';
+        if (!m || !m.citados[j.rut]) throw err('No estás citado a este partido');
+        m.citados[j.rut] = p.respuesta === 'confirmado' ? 'confirmado' : 'rechazado';
         break;
       }
 
@@ -877,6 +1375,10 @@
         if (p.montoFederativo != null) c.montoFederativo = num(p.montoFederativo, 0, 10000000) || 0;
         if (Array.isArray(p.mesesCobro)) c.mesesCobro = p.mesesCobro.map(Number).filter((m) => m >= 0 && m <= 11).sort((a, b) => a - b);
         if (p.diaVencimiento != null) c.diaVencimiento = num(p.diaVencimiento, 1, 28) || 10;
+        if (p.recordatorios && typeof p.recordatorios === 'object') {
+          const r = p.recordatorios;
+          c.recordatorios = { activo: !!r.activo, diasAntes: num(r.diasAntes, 0, 15) == null ? 3 : num(r.diasAntes, 0, 15), atraso: !!r.atraso, push: !!r.push, correo: !!r.correo, whatsapp: !!r.whatsapp };
+        }
         break;
       }
       case 'pago.marcar': {
@@ -964,23 +1466,23 @@
 
       // ----- El jugador informa un pago; la directiva lo aprueba o rechaza -----
       case 'pago.informar': {
-        exigir(rol === 'jugador');
+        const yoJ = jug();
         const concepto = String(p.concepto || '');
         const anioP = anio || new Date().getFullYear();
-        const info = { id: uid(), rut: actor.rut, concepto, anio: anioP, mes: null, fecha: fechaValida(p.fecha) ? p.fecha : hoyISO(), estado: 'pendiente', creado: hoyISO() };
+        const info = { id: uid(), rut: yoJ.rut, informadoPor: actor.rut, concepto, anio: anioP, mes: null, fecha: fechaValida(p.fecha) ? p.fecha : hoyISO(), estado: 'pendiente', creado: hoyISO() };
         if (concepto === 'cuota') {
           const mes = num(p.mes, 0, 11);
           if (mes == null || !db.config.mesesCobro.includes(mes)) throw err('Elige el mes que pagaste');
-          if ((pagoMes(db, actor.rut, anioP, mes) || {}).pagado) throw err('Ese mes ya aparece pagado');
+          if ((pagoMes(db, yoJ.rut, anioP, mes) || {}).pagado) throw err('Ese mes ya aparece pagado');
           info.mes = mes;
         } else if (concepto === 'federativo') {
-          if (federativoPagado(db, actor.rut, anioP)) throw err('El federativo ya aparece pagado');
+          if (federativoPagado(db, yoJ.rut, anioP)) throw err('El federativo ya aparece pagado');
         } else {
           const c = (db.cobros || []).find((x) => x.id === concepto);
-          if (!cobroAplica(c, actor)) throw err('Concepto no válido');
-          if (cobroPagado(db, c.id, actor.rut)) throw err('Ese cobro ya aparece pagado');
+          if (!cobroAplica(c, yoJ)) throw err('Concepto no válido');
+          if (cobroPagado(db, c.id, yoJ.rut)) throw err('Ese cobro ya aparece pagado');
         }
-        if (db.pagosInformados.some((x) => x.rut === actor.rut && x.estado === 'pendiente' && x.concepto === concepto && x.mes === info.mes && x.anio === anioP)) {
+        if (db.pagosInformados.some((x) => x.rut === yoJ.rut && x.estado === 'pendiente' && x.concepto === concepto && x.mes === info.mes && x.anio === anioP)) {
           throw err('Ya informaste ese pago; la directiva lo está revisando');
         }
         info.monto = num(p.monto, 0, 10000000);
@@ -1011,6 +1513,8 @@
           }
         }
         Object.assign(info, { estado: p.aprobar ? 'aprobado' : 'rechazado', nota: texto(p.nota, 200), revisadoPor: actor.rut, revisado: hoyISO() });
+        notificar(db, conApoderados(db, [info.rut]), p.aprobar ? 'Pago aprobado' : 'Pago rechazado',
+          p.aprobar ? 'La directiva registró tu pago de ' + pesos(info.monto) + '.' : 'Revisa el motivo en Finanzas: ' + info.nota, 'finanzas');
         break;
       }
 
@@ -1020,6 +1524,11 @@
         const t = texto(p.texto, 1000);
         if (!t) throw err('Escribe un mensaje');
         db.mensajes.push({ id: uid(), hilo: p.hilo, de: actor.rut, texto: t, fecha: new Date().toISOString(), leidoPor: [actor.rut] });
+        // Aviso a la otra parte: la directiva o los entrenadores, o el jugador y sus apoderados.
+        const [tipo, otroRut] = [p.hilo.slice(0, 3), p.hilo.slice(4)];
+        const equipo = db.usuarios.filter((u) => u.activo !== false && u.rol === (tipo === 'dir' ? 'directiva' : 'entrenador')).map((u) => u.rut);
+        const lado = (tipo === 'dir' ? esDir : rol === 'entrenador') ? conApoderados(db, [otroRut]) : equipo;
+        notificar(db, lado.filter((r) => r !== actor.rut), 'Mensaje de ' + actor.nombre, t.slice(0, 120), 'chat');
         break;
       }
       case 'chat.leer': {
@@ -1121,6 +1630,7 @@
           Object.assign(a, datos);
         } else {
           db.avisos.push(Object.assign({ id: uid(), fecha: hoyISO(), autor: actor.rut }, datos));
+          notificar(db, conApoderados(db, jugadoresDeCategoria(db, datos.categoria)), 'Aviso: ' + titulo, datos.texto.slice(0, 120), 'avisos');
         }
         break;
       }
@@ -1159,18 +1669,175 @@
         break;
       }
       case 'documento.firmar': {
-        exigir(rol === 'jugador');
+        const j = jug();
         const d = (db.documentos || []).find((x) => x.id === p.id);
-        if (!d || !documentoAplica(d, actor.rut)) throw err('Documento no encontrado');
-        if (firmaDe(db, actor.rut, d)) throw err('Ya firmaste este documento');
+        if (!d || !documentoAplica(d, j.rut)) throw err('Documento no encontrado');
+        if (firmaDe(db, j.rut, d)) throw err('Este documento ya está firmado');
+        // Los menores no firman: lo hace su apoderado desde su cuenta. Los mayores firman ellos mismos.
+        if (esMenor(j) && rol !== 'apoderado') throw err('Eres menor de edad: tu apoderado firma por ti desde su cuenta');
+        if (!esMenor(j) && rol === 'apoderado') throw err(j.nombre.split(/\s+/)[0] + ' es mayor de edad: firma desde su propia cuenta');
         const aceptados = Array.isArray(p.aceptados) ? p.aceptados.map(Number) : [];
         if (d.puntos.some((_, i) => !aceptados.includes(i))) throw err('Debes aceptar todos los puntos para firmar');
         const nombreFirma = texto(p.nombreFirma, 80);
         if (nombreFirma.length < 5) throw err('Escribe tu nombre completo como firma');
-        const menor = actor.fechaNac && edad(actor.fechaNac) < 18;
-        const apoderado = texto(p.apoderado, 120);
-        if (menor && apoderado.length < 5) throw err('Eres menor de edad: tu apoderado debe firmar con su nombre y RUT');
-        db.firmas.push({ id: uid(), rut: actor.rut, documentoId: d.id, version: d.version, fecha: hoyISO(), nombreFirma, apoderado });
+        db.firmas.push({
+          id: uid(), rut: j.rut, documentoId: d.id, version: d.version, fecha: hoyISO(), nombreFirma,
+          apoderado: rol === 'apoderado' ? actor.nombre + ' (' + formatearRut(actor.rut) + ')' : '', apoderadoRut: rol === 'apoderado' ? actor.rut : '',
+        });
+        break;
+      }
+
+      // ----- Evaluación física -----
+      // registros = [{ rut, valores: { t5105, salto, flex, sent, altura, peso } }]; una evaluación por jugador y fecha.
+      case 'evaluacion.guardar': {
+        exigir(esStaff);
+        if (!fechaValida(p.fecha)) throw err('Fecha no válida');
+        let n = 0;
+        (Array.isArray(p.registros) ? p.registros : []).slice(0, 80).forEach((r) => {
+          const j = buscarJugador(db, r && r.rut);
+          const valores = {};
+          TESTS_FISICOS.forEach(([k, nombre, , , min, max]) => {
+            const v = r.valores && r.valores[k];
+            if (v === '' || v == null) return;
+            const x = Number(String(v).replace(',', '.'));
+            if (!Number.isFinite(x) || x < min || x > max) throw err(nombre + ' de ' + j.nombre + ': valor fuera de rango (' + min + ' a ' + max + ')');
+            valores[k] = Math.round(x * 100) / 100;
+          });
+          if (!Object.keys(valores).length) return;
+          const prev = db.evaluaciones.find((e) => e.rut === j.rut && e.fecha === p.fecha);
+          if (prev) Object.assign(prev, { valores, autor: actor.rut });
+          else db.evaluaciones.push({ id: uid(), rut: j.rut, fecha: p.fecha, autor: actor.rut, valores });
+          n++;
+        });
+        if (!n) throw err('Ingresa al menos un resultado');
+        break;
+      }
+      case 'evaluacion.eliminar': {
+        exigir(esStaff);
+        db.evaluaciones = db.evaluaciones.filter((e) => e.id !== p.id);
+        break;
+      }
+
+      // ----- Inventario: material del club y a quién se le entregó -----
+      case 'inventario.guardar': {
+        exigir(esStaff);
+        const nombre = texto(p.nombre, 80);
+        if (!nombre) throw err('Indica el nombre del material');
+        const total = num(p.total, 0, 10000);
+        if (total == null) throw err('Indica la cantidad');
+        const datos = { nombre, tipo: texto(p.tipo, 40) || 'Otros', total, notas: texto(p.notas, 200) };
+        if (p.id) {
+          const it = db.inventario.find((x) => x.id === p.id);
+          if (!it) throw err('Material no encontrado');
+          const prestado = db.prestamos.filter((x) => x.itemId === it.id && !x.devuelto).reduce((s, x) => s + x.cantidad, 0);
+          if (total < prestado) throw err('Hay ' + prestado + ' entregados: el total no puede ser menor');
+          Object.assign(it, datos);
+        } else {
+          db.inventario.push(Object.assign({ id: uid() }, datos));
+        }
+        break;
+      }
+      case 'inventario.eliminar': {
+        exigir(esStaff);
+        if (db.prestamos.some((x) => x.itemId === p.id && !x.devuelto)) throw err('Primero registra la devolución del material entregado');
+        db.inventario = db.inventario.filter((x) => x.id !== p.id);
+        db.prestamos = db.prestamos.filter((x) => x.itemId !== p.id);
+        break;
+      }
+      case 'prestamo.crear': {
+        exigir(esStaff);
+        const it = db.inventario.find((x) => x.id === p.itemId);
+        if (!it) throw err('Material no encontrado');
+        const u = buscarUsuario(db, p.rut);
+        if (!u || u.rol === 'apoderado') throw err('Elige a quién se entrega');
+        const cantidad = num(p.cantidad, 1, 10000) || 1;
+        const prestado = db.prestamos.filter((x) => x.itemId === it.id && !x.devuelto).reduce((s, x) => s + x.cantidad, 0);
+        if (prestado + cantidad > it.total) throw err('Sólo quedan ' + (it.total - prestado) + ' disponibles');
+        db.prestamos.push({ id: uid(), itemId: it.id, rut: u.rut, cantidad, fecha: fechaValida(p.fecha) ? p.fecha : hoyISO(), nota: texto(p.nota, 120), por: actor.rut, devuelto: null });
+        break;
+      }
+      case 'prestamo.devolver': {
+        exigir(esStaff);
+        const x = db.prestamos.find((y) => y.id === p.id);
+        if (!x) throw err('Entrega no encontrada');
+        x.devuelto = hoyISO();
+        x.recibio = actor.rut;
+        break;
+      }
+
+      // ----- Encuestas -----
+      case 'encuesta.guardar': {
+        exigir(esStaff);
+        const pregunta = texto(p.pregunta, 160);
+        if (!pregunta) throw err('Escribe la pregunta');
+        const opciones = (Array.isArray(p.opciones) ? p.opciones : String(p.opciones || '').split('\n')).map((x) => texto(x, 80)).filter(Boolean).slice(0, 8);
+        if (opciones.length < 2) throw err('Agrega al menos 2 opciones');
+        if (p.categoria && !db.config.categorias.includes(p.categoria)) throw err('Categoría no válida');
+        if (p.cierre && !fechaValida(p.cierre)) throw err('Fecha de cierre no válida');
+        db.encuestas.push({ id: uid(), pregunta, opciones, categoria: p.categoria || '', cierre: p.cierre || '', autor: actor.rut, fecha: hoyISO(), cerrada: false, votos: {} });
+        notificar(db, conApoderados(db, jugadoresDeCategoria(db, p.categoria)), 'Nueva encuesta', pregunta, 'encuestas');
+        break;
+      }
+      case 'encuesta.votar': {
+        const j = jug();
+        const e = db.encuestas.find((x) => x.id === p.id);
+        if (!e || (e.categoria && e.categoria !== j.categoria)) throw err('Encuesta no encontrada');
+        if (encuestaCerrada(e)) throw err('La encuesta ya cerró');
+        const o = num(p.opcion, 0, e.opciones.length - 1);
+        if (o == null || String(p.opcion) === '') throw err('Elige una opción');
+        e.votos[j.rut] = o;
+        break;
+      }
+      case 'encuesta.cerrar':
+      case 'encuesta.eliminar': {
+        const e = db.encuestas.find((x) => x.id === p.id);
+        if (!e) throw err('Encuesta no encontrada');
+        exigir(esDir || e.autor === actor.rut);
+        if (action.type === 'encuesta.cerrar') e.cerrada = true;
+        else db.encuestas = db.encuestas.filter((x) => x.id !== p.id);
+        break;
+      }
+
+      // ----- Galería: sólo los entrenadores suben fotos, máximo 3 por álbum -----
+      case 'galeria.guardar': {
+        exigir(rol === 'entrenador');
+        const titulo = texto(p.titulo, 80);
+        if (!titulo) throw err('Ponle un título al álbum');
+        if (!fechaValida(p.fecha)) throw err('Fecha no válida');
+        if (p.categoria && !db.config.categorias.includes(p.categoria)) throw err('Categoría no válida');
+        const fotos = Array.isArray(p.fotos) ? p.fotos : [];
+        let al = p.id && db.galeria.find((x) => x.id === p.id);
+        if (p.id && !al) throw err('Álbum no encontrado');
+        if (al) exigir(al.autor === actor.rut);
+        const ya = al ? al.fotos.length : 0;
+        if (ya + fotos.length > MAX_FOTOS_ALBUM) throw err('Máximo ' + MAX_FOTOS_ALBUM + ' fotos por álbum');
+        if (!ya && !fotos.length) throw err('Agrega al menos una foto');
+        const partido = p.partidoId ? db.partidos.find((m) => m.id === p.partidoId) : null;
+        const datos = { titulo, fecha: p.fecha, categoria: p.categoria || (partido ? partido.categoria : ''), partidoId: partido ? partido.id : '', tipo: ['plantel', 'partido', 'evento'].includes(p.tipo) ? p.tipo : 'partido' };
+        const ids = fotos.map((f) => guardarImagen(db, f, 450));
+        if (al) { Object.assign(al, datos); al.fotos = al.fotos.concat(ids); } else {
+          al = Object.assign({ id: uid(), autor: actor.rut, creado: hoyISO(), fotos: ids }, datos);
+          db.galeria.push(al);
+          notificar(db, conApoderados(db, jugadoresDeCategoria(db, al.categoria)), 'Fotos nuevas', titulo, 'galeria');
+        }
+        break;
+      }
+      case 'galeria.quitarFoto': {
+        const al = db.galeria.find((x) => x.id === p.id);
+        if (!al) throw err('Álbum no encontrado');
+        exigir(esDir || al.autor === actor.rut);
+        if (!al.fotos.includes(p.foto)) throw err('Foto no encontrada');
+        al.fotos = al.fotos.filter((f) => f !== p.foto);
+        quitarImagen(db, p.foto);
+        if (!al.fotos.length) db.galeria = db.galeria.filter((x) => x.id !== al.id);
+        break;
+      }
+      case 'galeria.eliminar': {
+        const al = db.galeria.find((x) => x.id === p.id);
+        if (!al) throw err('Álbum no encontrado');
+        exigir(esDir || al.autor === actor.rut);
+        al.fotos.forEach((f) => quitarImagen(db, f));
+        db.galeria = db.galeria.filter((x) => x.id !== p.id);
         break;
       }
 
@@ -1188,7 +1855,7 @@
 
   async function verificarClave(usuario, clave, sha256) {
     if (!usuario || usuario.activo === false) return false;
-    if (!usuario.claveHash) return usuario.rol === 'jugador' && String(clave) === claveInicial(usuario.rut);
+    if (!usuario.claveHash) return ['jugador', 'apoderado'].includes(usuario.rol) && String(clave) === claveInicial(usuario.rut);
     return (await hashClave(usuario.rut, String(clave), sha256)) === usuario.claveHash;
   }
 
@@ -1224,33 +1891,67 @@
    * - jugador: sus propios datos, los eventos de su categoría y los convenios.
    */
   const convenioPublicado = (c) => !c.estado || c.estado === 'publicado';
+  const encuestaCerrada = (e) => !!(e.cerrada || (e.cierre && e.cierre < hoyISO()));
+
+  // Para jugadores y apoderados: el conteo sin decir quién votó qué.
+  function resultadoEncuesta(e, rut) {
+    const conteo = e.opciones.map(() => 0);
+    Object.values(e.votos || {}).forEach((o) => { if (conteo[o] != null) conteo[o]++; });
+    const r = Object.assign({}, e, { conteo, total: Object.keys(e.votos || {}).length, miVoto: rut && e.votos && e.votos[rut] != null ? e.votos[rut] : null, cerrada: encuestaCerrada(e) });
+    delete r.votos;
+    return r;
+  }
 
   function viewFor(db, rut) {
     const yo = buscarUsuario(db, rut);
     if (!yo || yo.activo === false) return null;
+    if (yo.rol === 'jugador') return vistaJugador(db, yo, null);
+    if (yo.rol === 'apoderado') {
+      // El apoderado recibe la vista de cada hijo o hija; la app muestra una a la vez.
+      const hijos = (yo.hijos || []).map((r) => buscarUsuario(db, r)).filter((u) => u && u.rol === 'jugador' && u.activo !== false);
+      return { yo: rut, apoderado: { rut, nombre: yo.nombre, telefono: yo.telefono || '', email: yo.email || '', claveInicial: !yo.claveHash }, hijos: hijos.map((h) => vistaJugador(db, h, yo)) };
+    }
     const v = clone(db);
+    ['fotos', 'fotosBorradas', 'notificar', 'recordatoriosEnviados'].forEach((k) => delete v[k]);
     v.usuarios.forEach((u) => { u.claveInicial = !u.claveHash; delete u.claveHash; });
     v.yo = rut;
     // Cada uno ve sólo las conversaciones en que participa.
     v.mensajes = (v.mensajes || []).filter((m) => puedeVerHilo(db, yo, m.hilo));
-    if (yo.rol === 'directiva') return v;
-    v.convenios = v.convenios.filter((c) => convenioPublicado(c) || c.propuestoPor === rut);
-
-    if (yo.rol === 'entrenador') {
-      delete v.movimientos;
-      v.pagos = {};
-      v.cobros = [];
-      v.pagosCobro = {};
-      v.pagosInformados = [];
+    v.encuestas = (v.encuestas || []).map((e) => Object.assign(resultadoEncuesta(e, null), { habilitados: jugadoresDeCategoria(db, e.categoria).length }));
+    if (yo.rol === 'directiva') {
+      // La ficha médica es sólo para el cuerpo técnico.
+      v.usuarios.forEach((u) => { delete u.medica; });
       return v;
     }
+    v.convenios = v.convenios.filter((c) => convenioPublicado(c) || c.propuestoPor === rut);
+    delete v.movimientos;
+    delete v.cambiosTemporada;
+    delete v.recordatoriosLog;
+    v.pagos = {};
+    v.cobros = [];
+    v.pagosCobro = {};
+    v.pagosInformados = [];
+    return v;
+  }
 
+  // Vista de un jugador. Si la pide su apoderado, "apo" es el apoderado.
+  function vistaJugador(db, yo, apo) {
+    const rut = yo.rut;
+    const v = clone(db);
+    ['fotos', 'fotosBorradas', 'notificar', 'recordatoriosEnviados', 'cambiosTemporada', 'inventario', 'prestamos', 'evaluaciones', 'recordatoriosLog'].forEach((k) => delete v[k]);
+    v.yo = rut;
+    v.yoReal = apo ? apo.rut : rut;
+    v.mensajes = (v.mensajes || []).filter((m) => puedeVerHilo(db, yo, m.hilo));
+    v.convenios = v.convenios.filter((c) => convenioPublicado(c) || c.propuestoPor === v.yoReal);
     const anio = new Date().getFullYear();
-    const yoV = v.usuarios.find((u) => u.rut === rut);
+    const yoV = clone(yo);
+    yoV.claveInicial = !yo.claveHash;
+    delete yoV.claveHash;
     const nombreDe = (r) => { const u = buscarUsuario(db, r); return u ? { nombre: u.nombre, numero: u.numero } : { nombre: '?', numero: null }; };
     const porNumero = (a, b) => (a.numero == null ? 999 : a.numero) - (b.numero == null ? 999 : b.numero) || a.nombre.localeCompare(b.nombre);
-    v.usuarios = [yoV].concat(v.usuarios.filter((u) => u.rol !== 'jugador' && u.activo !== false)
-      .map((u) => ({ rut: u.rut, nombre: u.nombre, rol: u.rol, cargo: u.cargo, telefono: u.telefono, jugadorRut: u.jugadorRut === rut ? rut : '' })));
+    const visible = (u) => ({ rut: u.rut, nombre: u.nombre, rol: u.rol, cargo: u.cargo, telefono: u.telefono, jugadorRut: u.jugadorRut === rut ? rut : '' });
+    v.usuarios = [yoV].concat(db.usuarios.filter((u) => u.rol !== 'jugador' && u.rol !== 'apoderado' && u.activo !== false).map(visible),
+      apoderadosDe(db, rut).map((a) => ({ rut: a.rut, nombre: a.nombre, rol: 'apoderado', telefono: a.telefono || '', email: a.email || '' })));
     v.pagos = { [rut]: db.pagos[rut] || {} };
     v.federativo = { [rut]: db.federativo[rut] || {} };
     v.lesiones = v.lesiones.filter((l) => l.rut === rut);
@@ -1263,21 +1964,39 @@
     v.pagosCobro = misCobros;
     v.pagosInformados = (v.pagosInformados || []).filter((x) => x.rut === rut);
     v.jugadas = (v.jugadas || []).filter((j) => (j.categorias || []).includes(yo.categoria));
+    const jugadasVisibles = new Set(v.jugadas.map((j) => j.id));
     v.entrenamientos = entrenamientosDeCategoria(v, yo.categoria).map((e) => {
       const r = Object.assign({}, e, { miAsistencia: (e.asistencia || {})[rut] || null });
       delete r.asistencia;
+      // El plan de la sesión se muestra sólo si el entrenador lo dejó visible.
+      if (!e.planVisible) delete r.plan;
+      else r.plan = (e.plan || []).map((x) => Object.assign({}, x, { jugada: jugadasVisibles.has(x.jugada) ? x.jugada : '' }));
       return r;
     });
     v.partidos = v.partidos.filter((m) => m.categoria === yo.categoria || m.citados[rut]).map((m) => {
       const r = Object.assign({}, m, {
         miCitacion: m.citados[rut] || null,
         citadosLista: Object.keys(m.citados).map(nombreDe).sort(porNumero),
+        miEstadistica: (m.estadisticas || {})[rut] || null,
       });
       delete r.citados;
+      delete r.estadisticas;
+      delete r.notas;
       return r;
     });
+    v.goleadores = tablaGoleadores(db, yo.categoria, anio).map((x) => ({ nombre: x.nombre, numero: x.numero, pj: x.pj, g: x.g, at: x.at, dm: x.dm, am: x.am, ro: x.ro, az: x.az, esYo: x.rut === rut }));
+    v.misEstadisticas = estadisticasJugador(db, rut, anio);
+    v.evaluaciones = (db.evaluaciones || []).filter((e) => e.rut === rut);
+    v.miMaterial = (db.prestamos || []).filter((x) => x.rut === rut && !x.devuelto).map((x) => {
+      const it = (db.inventario || []).find((i) => i.id === x.itemId) || { nombre: '?' };
+      return { nombre: it.nombre, cantidad: x.cantidad, fecha: x.fecha, nota: x.nota };
+    });
+    v.encuestas = (db.encuestas || []).filter((e) => !e.categoria || e.categoria === yo.categoria).map((e) => resultadoEncuesta(e, rut));
+    v.galeria = (v.galeria || []).filter((a) => !a.categoria || a.categoria === yo.categoria);
+    v.cumpleanos = cumpleanosDelMes(db, new Date().getMonth(), anio, yo.categoria).map((c) => ({ nombre: c.nombre, dia: c.dia, cumple: c.cumple, esYo: c.rut === rut }));
     v.resumen = { asistencia: resumenAsistencia(db, yo, anio), cuota: cuotaDe(db, yo) };
     v.pendientes = documentosPendientes(db, rut).map((d) => d.id);
+    v.menor = esMenor(yo);
     return v;
   }
 
@@ -1292,5 +2011,8 @@
     cuotaDe, federativoPagado, habilitado, pagoMes, mesesAdeudados, resumenAsistencia, entrenamientosDeCategoria,
     dbVacia, dbEjemplo, migrar, applyAction, viewFor,
     hashClave, verificarClave, cambiarClave, prepararAccion,
+    MESES_LARGOS, esMenor, apoderadosDe, siguienteCategoria, cambioTemporada,
+    CAMPOS_ESTADISTICA, tablaGoleadores, estadisticasJugador, TESTS_FISICOS, cumpleanosDelMes,
+    reporteMensual, recordatoriosPendientes, marcarRecordatorio, crearXlsx, crc32, encuestaCerrada, MAX_FOTOS_ALBUM, pesos,
   };
 });
