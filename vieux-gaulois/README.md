@@ -27,6 +27,7 @@ App de gestión del club con tres accesos: **Directiva**, **Entrenadores** y **J
 | Ver las jugadas compartidas con su categoría | | | ✓ |
 | Ver entrenamientos realizados y a cuántos asistió | | | ✓ |
 | Ver convenios del club y calendario de partidos | ✓ | ✓ | ✓ |
+| Proponer un convenio (se publica cuando la directiva lo aprueba) | | ✓ | ✓ |
 | Confirmar o rechazar una citación | | | ✓ |
 | Inscribir jugadores y editar sus datos | ✓ | ✓ | |
 | Programar entrenamientos y marcar asistencia | ✓ | ✓ | |
@@ -34,7 +35,7 @@ App de gestión del club con tres accesos: **Directiva**, **Entrenadores** y **J
 | Ver quién está **habilitado** (federativo pagado) | ✓ | ✓ | |
 | Finanzas: precios de cuotas, pagos mensuales, federativo, otros cobros, ingresos y gastos | ✓ | | |
 | Activar link de pago o transferencia por concepto; aprobar pagos informados | ✓ | | |
-| Convenios, categorías, cuentas de directiva y entrenadores, dar de baja | ✓ | | |
+| Publicar convenios y aprobar o rechazar propuestas; categorías, cuentas de directiva y entrenadores, dar de baja | ✓ | | |
 
 Un jugador está **habilitado para jugar** cuando su federativo del año está pagado.
 Al citar a un jugador no habilitado, la app avisa al entrenador.

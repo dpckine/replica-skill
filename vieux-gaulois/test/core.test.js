@@ -332,3 +332,26 @@ test('jugadas: los entrenadores las guardan y las comparten con categorías', ()
   assert.throws(() => C.applyAction(db, 'usr:tomas', { type: 'jugada.eliminar', payload: { id: j.id } }), /permiso/);
   C.applyAction(db, DIR, { type: 'jugada.eliminar', payload: { id: j.id } });
 });
+
+test('convenios: jugadores y entrenadores proponen, la directiva publica', () => {
+  const db = C.dbEjemplo();
+  firmar(db, JUG);
+  const otro = C.rutDesdeCuerpo(19876543);
+  assert.throws(() => C.applyAction(db, JUG, { type: 'convenio.guardar', payload: { empresa: 'X' } }), /permiso/);
+  C.applyAction(db, JUG, { type: 'convenio.proponer', payload: { empresa: 'Óptica Visión', beneficio: '10%', contacto: 'ventas@optica.cl' } });
+  C.applyAction(db, ENT, { type: 'convenio.proponer', payload: { empresa: 'Fisio Sur' } });
+  const pj = db.convenios.find((c) => c.empresa === 'Óptica Visión');
+  const pe = db.convenios.find((c) => c.empresa === 'Fisio Sur');
+  assert.strictEqual(pj.estado, 'propuesto');
+  assert.ok(C.viewFor(db, JUG).convenios.some((c) => c.id === pj.id));
+  assert.ok(!C.viewFor(db, otro).convenios.some((c) => c.id === pj.id || c.estado === 'propuesto'));
+  assert.ok(C.viewFor(db, DIR).convenios.some((c) => c.id === pe.id));
+  assert.throws(() => C.applyAction(db, JUG, { type: 'convenio.revisar', payload: { id: pj.id, aprobar: true } }), /permiso/);
+  C.applyAction(db, DIR, { type: 'convenio.revisar', payload: { id: pj.id, aprobar: true } });
+  assert.ok(C.viewFor(db, otro).convenios.some((c) => c.id === pj.id));
+  assert.throws(() => C.applyAction(db, JUG, { type: 'convenio.eliminar', payload: { id: pj.id } }), /permiso/);
+  C.applyAction(db, DIR, { type: 'convenio.revisar', payload: { id: pe.id, aprobar: false, nota: 'Ya tenemos kinesiología' } });
+  assert.strictEqual(pe.estado, 'rechazado');
+  C.applyAction(db, ENT, { type: 'convenio.eliminar', payload: { id: pe.id } });
+  assert.ok(!db.convenios.some((c) => c.id === pe.id));
+});

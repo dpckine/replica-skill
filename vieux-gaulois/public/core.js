@@ -486,7 +486,9 @@
     db.convenios.push(
       { id: uid(), empresa: 'Clínica Deportiva KineSport', beneficio: '20% de descuento en kinesiología', detalle: 'Presentando credencial del club. Reserva al +56 2 2345 6789.' },
       { id: uid(), empresa: 'Tienda Handball Pro', beneficio: '15% en zapatillas y balones', detalle: 'Código VIEUXGAULOIS en tienda online.' },
-      { id: uid(), empresa: 'Gimnasio Fuerza Total', beneficio: 'Matrícula gratis y 10% mensual', detalle: 'Válido para jugadores con cuotas al día.' }
+      { id: uid(), empresa: 'Gimnasio Fuerza Total', beneficio: 'Matrícula gratis y 10% mensual', detalle: 'Válido para jugadores con cuotas al día.' },
+      { id: uid(), estado: 'propuesto', propuestoPor: jugadores[4].rut, creado: hoy, empresa: 'Nutricionista Paula Díaz', beneficio: '25% en primera consulta',
+        detalle: 'Atiende deportistas en Ñuñoa, trabaja con mi equipo universitario.', contacto: '+56 9 7777 1234' }
     );
 
     // Otros cobros: uno con link y transferencia, otro sólo con transferencia.
@@ -1058,18 +1060,42 @@
         exigir(esDir);
         const empresa = texto(p.empresa, 80);
         if (!empresa) throw err('Indica la empresa o institución');
-        const datos = { empresa, beneficio: texto(p.beneficio, 120), detalle: texto(p.detalle, 400) };
+        const datos = { empresa, beneficio: texto(p.beneficio, 120), detalle: texto(p.detalle, 400), contacto: texto(p.contacto, 120) };
         if (p.id) {
           const c = db.convenios.find((x) => x.id === p.id);
           if (!c) throw err('Convenio no encontrado');
           Object.assign(c, datos);
         } else {
-          db.convenios.push(Object.assign({ id: uid() }, datos));
+          db.convenios.push(Object.assign({ id: uid(), estado: 'publicado', creado: hoyISO() }, datos));
         }
         break;
       }
-      case 'convenio.eliminar': {
+      // Jugadores y entrenadores proponen; sólo se publica cuando la directiva lo aprueba.
+      case 'convenio.proponer': {
+        exigir(!esDir);
+        const empresa = texto(p.empresa, 80);
+        if (!empresa) throw err('Indica la empresa o institución');
+        const abiertas = db.convenios.filter((x) => x.propuestoPor === actor.rut && x.estado === 'propuesto').length;
+        if (abiertas >= 5) throw err('Ya tienes 5 propuestas esperando revisión');
+        db.convenios.push({
+          id: uid(), estado: 'propuesto', propuestoPor: actor.rut, creado: hoyISO(),
+          empresa, beneficio: texto(p.beneficio, 120), detalle: texto(p.detalle, 400), contacto: texto(p.contacto, 120),
+        });
+        break;
+      }
+      case 'convenio.revisar': {
         exigir(esDir);
+        const c = db.convenios.find((x) => x.id === p.id);
+        if (!c) throw err('Convenio no encontrado');
+        if (c.estado !== 'propuesto') throw err('Esta propuesta ya fue revisada');
+        Object.assign(c, { estado: p.aprobar ? 'publicado' : 'rechazado', nota: texto(p.nota, 200), revisadoPor: actor.rut, revisado: hoyISO() });
+        break;
+      }
+      case 'convenio.eliminar': {
+        const c = db.convenios.find((x) => x.id === p.id);
+        if (!c) throw err('Convenio no encontrado');
+        // Quien propuso puede retirar su propuesta mientras no esté publicada.
+        exigir(esDir || (c.propuestoPor === actor.rut && c.estado !== 'publicado'));
         db.convenios = db.convenios.filter((x) => x.id !== p.id);
         break;
       }
@@ -1197,6 +1223,8 @@
    * - entrenador: todo menos finanzas detalladas (sí ve el federativo para saber quién está habilitado).
    * - jugador: sus propios datos, los eventos de su categoría y los convenios.
    */
+  const convenioPublicado = (c) => !c.estado || c.estado === 'publicado';
+
   function viewFor(db, rut) {
     const yo = buscarUsuario(db, rut);
     if (!yo || yo.activo === false) return null;
@@ -1206,6 +1234,7 @@
     // Cada uno ve sólo las conversaciones en que participa.
     v.mensajes = (v.mensajes || []).filter((m) => puedeVerHilo(db, yo, m.hilo));
     if (yo.rol === 'directiva') return v;
+    v.convenios = v.convenios.filter((c) => convenioPublicado(c) || c.propuestoPor === rut);
 
     if (yo.rol === 'entrenador') {
       delete v.movimientos;
@@ -1255,7 +1284,7 @@
   return {
     MESES, ROLES, POSICIONES,
     limpiarRut, dvRut, normalizarRut, formatearRut, claveInicial, rutDesdeCuerpo,
-    normalizarUsuario, idDeIngreso, textoHash, CUENTA_DIRECTIVA,
+    normalizarUsuario, idDeIngreso, textoHash, CUENTA_DIRECTIVA, convenioPublicado,
     hoyISO, sumarDias, edad, uid, clone,
     CATEGORIAS_BASE, RAMAS, CON_ANIO, armarCategorias, baseCategoria, ramaCategoria, llevaAnio, etiquetaCategoria,
     COMPROMISO_BECA, documentoAplica, firmaDe, documentosPendientes,

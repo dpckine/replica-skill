@@ -1176,7 +1176,9 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
     db.convenios.push(
       { id: uid(), empresa: 'Clínica Deportiva KineSport', beneficio: '20% de descuento en kinesiología', detalle: 'Presentando credencial del club. Reserva al +56 2 2345 6789.' },
       { id: uid(), empresa: 'Tienda Handball Pro', beneficio: '15% en zapatillas y balones', detalle: 'Código VIEUXGAULOIS en tienda online.' },
-      { id: uid(), empresa: 'Gimnasio Fuerza Total', beneficio: 'Matrícula gratis y 10% mensual', detalle: 'Válido para jugadores con cuotas al día.' }
+      { id: uid(), empresa: 'Gimnasio Fuerza Total', beneficio: 'Matrícula gratis y 10% mensual', detalle: 'Válido para jugadores con cuotas al día.' },
+      { id: uid(), estado: 'propuesto', propuestoPor: jugadores[4].rut, creado: hoy, empresa: 'Nutricionista Paula Díaz', beneficio: '25% en primera consulta',
+        detalle: 'Atiende deportistas en Ñuñoa, trabaja con mi equipo universitario.', contacto: '+56 9 7777 1234' }
     );
 
     // Otros cobros: uno con link y transferencia, otro sólo con transferencia.
@@ -1748,18 +1750,42 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
         exigir(esDir);
         const empresa = texto(p.empresa, 80);
         if (!empresa) throw err('Indica la empresa o institución');
-        const datos = { empresa, beneficio: texto(p.beneficio, 120), detalle: texto(p.detalle, 400) };
+        const datos = { empresa, beneficio: texto(p.beneficio, 120), detalle: texto(p.detalle, 400), contacto: texto(p.contacto, 120) };
         if (p.id) {
           const c = db.convenios.find((x) => x.id === p.id);
           if (!c) throw err('Convenio no encontrado');
           Object.assign(c, datos);
         } else {
-          db.convenios.push(Object.assign({ id: uid() }, datos));
+          db.convenios.push(Object.assign({ id: uid(), estado: 'publicado', creado: hoyISO() }, datos));
         }
         break;
       }
-      case 'convenio.eliminar': {
+      // Jugadores y entrenadores proponen; sólo se publica cuando la directiva lo aprueba.
+      case 'convenio.proponer': {
+        exigir(!esDir);
+        const empresa = texto(p.empresa, 80);
+        if (!empresa) throw err('Indica la empresa o institución');
+        const abiertas = db.convenios.filter((x) => x.propuestoPor === actor.rut && x.estado === 'propuesto').length;
+        if (abiertas >= 5) throw err('Ya tienes 5 propuestas esperando revisión');
+        db.convenios.push({
+          id: uid(), estado: 'propuesto', propuestoPor: actor.rut, creado: hoyISO(),
+          empresa, beneficio: texto(p.beneficio, 120), detalle: texto(p.detalle, 400), contacto: texto(p.contacto, 120),
+        });
+        break;
+      }
+      case 'convenio.revisar': {
         exigir(esDir);
+        const c = db.convenios.find((x) => x.id === p.id);
+        if (!c) throw err('Convenio no encontrado');
+        if (c.estado !== 'propuesto') throw err('Esta propuesta ya fue revisada');
+        Object.assign(c, { estado: p.aprobar ? 'publicado' : 'rechazado', nota: texto(p.nota, 200), revisadoPor: actor.rut, revisado: hoyISO() });
+        break;
+      }
+      case 'convenio.eliminar': {
+        const c = db.convenios.find((x) => x.id === p.id);
+        if (!c) throw err('Convenio no encontrado');
+        // Quien propuso puede retirar su propuesta mientras no esté publicada.
+        exigir(esDir || (c.propuestoPor === actor.rut && c.estado !== 'publicado'));
         db.convenios = db.convenios.filter((x) => x.id !== p.id);
         break;
       }
@@ -1887,6 +1913,8 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
    * - entrenador: todo menos finanzas detalladas (sí ve el federativo para saber quién está habilitado).
    * - jugador: sus propios datos, los eventos de su categoría y los convenios.
    */
+  const convenioPublicado = (c) => !c.estado || c.estado === 'publicado';
+
   function viewFor(db, rut) {
     const yo = buscarUsuario(db, rut);
     if (!yo || yo.activo === false) return null;
@@ -1896,6 +1924,7 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
     // Cada uno ve sólo las conversaciones en que participa.
     v.mensajes = (v.mensajes || []).filter((m) => puedeVerHilo(db, yo, m.hilo));
     if (yo.rol === 'directiva') return v;
+    v.convenios = v.convenios.filter((c) => convenioPublicado(c) || c.propuestoPor === rut);
 
     if (yo.rol === 'entrenador') {
       delete v.movimientos;
@@ -1945,7 +1974,7 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
   return {
     MESES, ROLES, POSICIONES,
     limpiarRut, dvRut, normalizarRut, formatearRut, claveInicial, rutDesdeCuerpo,
-    normalizarUsuario, idDeIngreso, textoHash, CUENTA_DIRECTIVA,
+    normalizarUsuario, idDeIngreso, textoHash, CUENTA_DIRECTIVA, convenioPublicado,
     hoyISO, sumarDias, edad, uid, clone,
     CATEGORIAS_BASE, RAMAS, CON_ANIO, armarCategorias, baseCategoria, ramaCategoria, llevaAnio, etiquetaCategoria,
     COMPROMISO_BECA, documentoAplica, firmaDe, documentosPendientes,
@@ -2312,12 +2341,12 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
   };
   const TABS = {
     directiva: { barra: ['inicio', 'jugadores', 'finanzas', 'chat'], mas: ['partidos', 'entrenamientos', 'pizarra', 'avisos', 'lesiones', 'documentos', 'convenios', 'calendario', 'ajustes'] },
-    entrenador: { barra: ['inicio', 'jugadores', 'partidos', 'pizarra'], mas: ['entrenamientos', 'chat', 'avisos', 'lesiones', 'calendario'] },
+    entrenador: { barra: ['inicio', 'jugadores', 'partidos', 'pizarra'], mas: ['entrenamientos', 'chat', 'avisos', 'lesiones', 'convenios', 'calendario'] },
     jugador: { barra: ['perfil', 'finanzas', 'chat', 'avisos'], mas: ['calendario', 'jugadas', 'convenios'] },
   };
   const permitidas = () => { const t = TABS[rol()]; return t.barra.concat(t.mas, t.mas.length ? ['mas'] : []); };
   const contador = (tab) => (tab === 'lesiones' ? sinVer().length : tab === 'avisos' ? avisosNuevos() : tab === 'chat' ? chatSinLeer()
-    : tab === 'finanzas' && esDir() ? informesPendientes().length : tab === 'mas' ? TABS[rol()].mas.reduce((s, t) => s + contador(t), 0) : 0);
+    : tab === 'finanzas' && esDir() ? informesPendientes().length : tab === 'convenios' && esDir() ? propuestasConvenio().length : tab === 'mas' ? TABS[rol()].mas.reduce((s, t) => s + contador(t), 0) : 0);
 
   const BOTON_TITULO = {
     jugadores: () => esStaff() && '<button class="btn-redondo" data-act="nuevoJugador" aria-label="Inscribir jugador">' + icono('mas2') + '</button>',
@@ -2325,7 +2354,8 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
     partidos: () => '<button class="btn-redondo" data-act="nuevoPartido" aria-label="Nuevo partido">' + icono('mas2') + '</button>',
     avisos: () => esStaff() && '<button class="btn-redondo" data-act="nuevoAviso" aria-label="Nuevo aviso">' + icono('mas2') + '</button>',
     lesiones: () => '<button class="btn-redondo" data-act="lesionPara" aria-label="Registrar lesión">' + icono('mas2') + '</button>',
-    convenios: () => '<button class="btn-redondo" data-act="nuevoConvenio" aria-label="Nuevo convenio">' + icono('mas2') + '</button>',
+    convenios: () => (esDir() ? '<button class="btn-redondo" data-act="nuevoConvenio" aria-label="Nuevo convenio">' + icono('mas2') + '</button>'
+      : '<button class="btn-redondo" data-act="proponerConvenio" aria-label="Proponer convenio">' + icono('mas2') + '</button>'),
     finanzas: () => (esDir() ? '<button class="btn-redondo" data-act="nuevoMovimiento" aria-label="Registrar ingreso o gasto">' + icono('mas2') + '</button>'
       : '<button class="btn-redondo" data-act="informarPago" aria-label="Informar un pago">' + icono('mas2') + '</button>'),
     chat: () => esStaff() && !S.hilo && '<button class="btn-redondo" data-act="nuevoChat" aria-label="Nuevo mensaje">' + icono('mas2') + '</button>',
@@ -2359,12 +2389,11 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
       const n = contador(id);
       return '<li data-act="tab" data-tab="' + id + '"><span class="ico-celda c-' + id + '">' + icono(id) + '</span><div class="crece"><b>' + NOMBRES[id] + '</b></div>' +
         (n ? '<i class="punto">' + n + '</i>' : '') + '<span class="chevron">' + icono('flecha') + '</span></li>';
-    }).join('') + '</ul>') + seccionCuenta();
+    }).join('') + '</ul>');
   }
 
   function seccionCuenta() {
     return seccion('Cuenta', '<ul class="lista clic">' +
-      '<li data-act="tema" data-ciclo="1"><span class="ico-celda c-tema">' + icono(temaActual()) + '</span><div class="crece"><b>Tema</b></div><span class="valor">' + TEMAS[temaActual()] + '</span></li>' +
       '<li data-act="clave"><span class="ico-celda c-gris">' + icono('llave') + '</span><div class="crece"><b>Cambiar clave</b></div><span class="chevron">' + icono('flecha') + '</span></li>' +
       '<li data-act="salir"><span class="ico-celda c-rojo">' + icono('salir') + '</span><div class="crece"><b class="rojo">Cerrar sesión</b></div></li></ul>');
   }
@@ -2434,6 +2463,7 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
         nuevas.length ? btnTexto('Marcar revisado', 'lesionVistoTodo') : '') +
       seccion('Próximo partido', prox ? tarjetaPartido(prox) : vacio('No hay partidos programados.'), btnTexto('Ver todos', 'tab', 'data-tab="partidos"')) +
       (esDir() && informesPendientes().length ? seccion('Pagos informados por revisar', '<ul class="lista">' + informesPendientes().map(itemInforme).join('') + '</ul>', btnTexto('Finanzas', 'tab', 'data-tab="finanzas"')) : '') +
+      (esDir() && propuestasConvenio().length ? seccion('Convenios propuestos', '<ul class="lista">' + propuestasConvenio().map(itemPropuesta).join('') + '</ul>', btnTexto('Convenios', 'tab', 'data-tab="convenios"')) : '') +
       seccion('Esta semana', semana.length ? '<ul class="lista">' + semana.map(itemEntrenamiento).join('') + '</ul>' : vacio('Sin entrenamientos en los próximos 7 días.'), btnTexto('Ver todos', 'tab', 'data-tab="entrenamientos"'));
   }
 
@@ -2866,24 +2896,56 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
   }
 
   // ---------- Convenios ----------
-  function listaConvenios(editable) {
-    const cs = S.view.convenios;
-    if (!cs.length) return vacio('El club aún no tiene convenios publicados.');
-    return '<ul class="lista">' + cs.map((c) => '<li><span class="ico-celda c-convenios">' + icono('convenios') + '</span><div class="crece"><b>' + h(c.empresa) + '</b>' +
-      (c.beneficio ? '<span class="beneficio">' + h(c.beneficio) + '</span>' : '') + (c.detalle ? '<small>' + h(c.detalle) + '</small>' : '') + '</div>' +
-      (editable ? '<button class="btn mini" data-act="editarConvenio" data-id="' + c.id + '">Editar</button>' : '') + '</li>').join('') + '</ul>';
+  // Los publicados los ve todo el club; las propuestas de jugadores y entrenadores esperan a la directiva.
+  const conveniosPublicados = () => S.view.convenios.filter(C.convenioPublicado);
+  const propuestasConvenio = () => S.view.convenios.filter((c) => c.estado === 'propuesto');
+  const ESTADO_CONVENIO = { propuesto: ['En revisión', 'oro'], rechazado: ['No aceptado', 'mal'] };
+
+  function itemConvenio(c, extra) {
+    return '<li><span class="ico-celda c-convenios">' + icono('convenios') + '</span><div class="crece"><b>' + h(c.empresa) + '</b>' +
+      (c.beneficio ? '<span class="beneficio">' + h(c.beneficio) + '</span>' : '') + (c.detalle ? '<small>' + h(c.detalle) + '</small>' : '') +
+      (c.contacto ? '<small>Contacto: ' + h(c.contacto) + '</small>' : '') + (extra || '') + '</div></li>';
   }
 
-  const vistaConvenios = () => seccion('', listaConvenios(true), '', 'Los jugadores ven estos convenios en su perfil.');
+  function itemPropuesta(c) {
+    if (esDir()) {
+      const quien = usuario(c.propuestoPor);
+      return itemConvenio(c, '<small class="suave">Propuesto por ' + h(quien ? quien.nombre : '?') + (quien && quien.rol === 'entrenador' ? ' (entrenador)' : '') + ' · ' + h(fCorta(c.creado)) + '</small>' +
+        '<div class="fila" style="gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn mini primario" data-act="revisarConvenio" data-id="' + c.id + '" data-ok="1">Aprobar y publicar</button>' +
+        '<button class="btn mini contorno" data-act="editarConvenio" data-id="' + c.id + '">Editar</button>' +
+        '<button class="btn mini peligro" data-act="revisarConvenio" data-id="' + c.id + '">Rechazar</button></div>');
+    }
+    const [txt, tipo] = ESTADO_CONVENIO[c.estado] || ESTADO_CONVENIO.propuesto;
+    return itemConvenio(c, '<div class="fila" style="gap:8px;margin-top:6px">' + insignia(txt, tipo) + '<small class="suave">' + h(fCorta(c.creado)) + '</small>' +
+      '<button class="btn mini contorno" style="margin-left:auto" data-act="borrarConvenio" data-id="' + c.id + '">Retirar</button></div>' +
+      (c.nota ? '<small>Directiva: ' + h(c.nota) + '</small>' : ''));
+  }
 
-  function formConvenio(c) {
+  function vistaConvenios() {
+    const pub = conveniosPublicados();
+    const lista = pub.length ? '<ul class="lista">' + pub.map((c) => itemConvenio(c, esDir() ? '<div style="margin-top:6px"><button class="btn mini" data-act="editarConvenio" data-id="' + c.id + '">Editar</button></div>' : '')).join('') + '</ul>'
+      : vacio('El club aún no tiene convenios publicados.');
+    if (esDir()) {
+      const prop = propuestasConvenio();
+      return (prop.length ? seccion('Propuestas por revisar', '<ul class="lista">' + prop.map(itemPropuesta).join('') + '</ul>', '', 'Se publican sólo cuando las apruebas.') : '') +
+        seccion('Convenios publicados', lista, '', 'Todo el club ve estos convenios.');
+    }
+    const mias = S.view.convenios.filter((c) => c.propuestoPor === S.view.yo && !C.convenioPublicado(c));
+    return seccion('Convenios del club', lista) +
+      seccion('Mis propuestas', mias.length ? '<ul class="lista">' + mias.map(itemPropuesta).join('') + '</ul>' : vacio('¿Conoces una empresa que pueda dar un beneficio al club? Propónla y la directiva la revisará.'),
+        btnTexto('Proponer', 'proponerConvenio'));
+  }
+
+  function formConvenio(c, propuesta) {
     const nuevo = !c;
     c = c || {};
     return '<form id="form-modal">' + (nuevo ? '' : '<input type="hidden" name="id" value="' + c.id + '">') +
+      (propuesta ? '<p class="suave">La directiva revisará tu propuesta antes de publicarla para todo el club.</p>' : '') +
       campo('Empresa / institución', input('empresa', c.empresa, 'required maxlength="80"')) +
       campo('Beneficio', input('beneficio', c.beneficio, 'placeholder="Ej: 20% de descuento" maxlength="120"')) +
       campo('Detalle / cómo usarlo', '<textarea name="detalle" maxlength="400">' + h(c.detalle || '') + '</textarea>') +
-      pie(nuevo ? 'Publicar' : 'Guardar', nuevo ? '' : '<button type="button" class="btn ancho peligro" data-act="borrarConvenio" data-id="' + c.id + '">Eliminar convenio</button>') + '</form>';
+      campo('Contacto', input('contacto', c.contacto, 'placeholder="Teléfono, email o persona" maxlength="120"')) +
+      pie(propuesta ? 'Enviar propuesta' : nuevo ? 'Publicar' : 'Guardar', nuevo ? '' : '<button type="button" class="btn ancho peligro" data-act="borrarConvenio" data-id="' + c.id + '">Eliminar</button>') + '</form>';
   }
 
   // ---------- Ajustes (directiva) ----------
@@ -3036,8 +3098,7 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
       seccion('Próximos entrenamientos', misEntr.length ? '<ul class="lista">' + misEntr.map(itemEntrenamiento).join('') + '</ul>' : vacio('Sin entrenamientos programados.'), btnTexto('Calendario', 'tab', 'data-tab="calendario"')) +
       seccion('Lesiones y dolores', les.length ? '<ul class="lista">' + les.map(itemLesion).join('') + '</ul>' : vacio('No tienes lesiones ni dolores reportados.'), btnTexto('Reportar', 'lesionPara'), 'Lo que reportes lo ven tu entrenador y la directiva.') +
       seccion('Asistencia a entrenamientos', '<div class="fila" style="gap:16px"><div class="anillo" style="--p:' + a.porcentaje + '"><b>' + a.porcentaje + '%</b></div><div class="crece">Asististe a <b>' + a.asistidos + '</b> de <b>' + a.realizados + '</b> entrenamientos realizados' + (a.justificados ? '<br><small class="suave">' + a.justificados + ' ausencias justificadas</small>' : '') + '</div></div>') +
-      (firmas.length ? seccion('Documentos firmados', '<ul class="lista">' + firmas.map(([d, f]) => '<li><span class="ico-celda c-documentos">' + icono('documentos') + '</span><div class="crece"><b>' + h(d.titulo) + '</b><small>Firmado el ' + h(fCorta(f.fecha)) + '</small></div></li>').join('') + '</ul>') : '') +
-      seccionCuenta();
+      (firmas.length ? seccion('Documentos firmados', '<ul class="lista">' + firmas.map(([d, f]) => '<li><span class="ico-celda c-documentos">' + icono('documentos') + '</span><div class="crece"><b>' + h(d.titulo) + '</b><small>Firmado el ' + h(fCorta(f.fecha)) + '</small></div></li>').join('') + '</ul>') : '');
   }
 
   // ---------- Chat ----------
@@ -3347,7 +3408,7 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
   // ---------- Render ----------
   const VISTAS = {
     inicio: vistaInicio, avisos: vistaAvisos, jugadores: vistaJugadores, finanzas: () => (esDir() ? vistaFinanzas() : vistaMisFinanzas()), entrenamientos: vistaEntrenamientos, partidos: vistaPartidos,
-    lesiones: vistaLesiones, documentos: vistaDocumentos, convenios: () => (esDir() ? vistaConvenios() : seccion('', listaConvenios(false))), ajustes: vistaAjustes, calendario: vistaCalendario, perfil: vistaPerfil, mas: vistaMas,
+    lesiones: vistaLesiones, documentos: vistaDocumentos, convenios: vistaConvenios, ajustes: vistaAjustes, calendario: vistaCalendario, perfil: vistaPerfil, mas: vistaMas,
     chat: vistaChat, pizarra: vistaPizarra, jugadas: vistaJugadas,
   };
 
@@ -3613,7 +3674,13 @@ document.querySelector("link[rel=icon]").href = window.VG_ESCUDO;
     // Convenios
     nuevoConvenio: () => abrirModal('Nuevo convenio', formConvenio(), (o) => accion('convenio.guardar', o, 'Convenio publicado')),
     editarConvenio: (d) => abrirModal('Editar convenio', formConvenio(S.view.convenios.find((c) => c.id === d.id)), (o) => accion('convenio.guardar', o, 'Guardado')),
-    borrarConvenio: (d) => { if (confirm('¿Eliminar este convenio?')) enviarConError(accion('convenio.eliminar', { id: d.id }, 'Eliminado')); },
+    borrarConvenio: (d) => { if (confirm(esDir() ? '¿Eliminar este convenio?' : '¿Retirar esta propuesta?')) enviarConError(accion('convenio.eliminar', { id: d.id }, esDir() ? 'Eliminado' : 'Propuesta retirada')); },
+    proponerConvenio: () => abrirModal('Proponer convenio', formConvenio(null, true), (o) => accion('convenio.proponer', o, 'Propuesta enviada a la directiva')),
+    revisarConvenio: (d) => {
+      if (d.ok) { accion('convenio.revisar', { id: d.id, aprobar: true }, 'Convenio publicado para todo el club'); return; }
+      const nota = prompt('Motivo (lo verá quien lo propuso):', '');
+      if (nota != null) accion('convenio.revisar', { id: d.id, aprobar: false, nota }, 'Propuesta rechazada');
+    },
 
     // Staff
     nuevoStaff: () => abrirModal('Agregar directiva o entrenador', '<form id="form-modal">' +
