@@ -250,3 +250,85 @@ test('migrar completa una base de la versión anterior sin perder datos', () => 
   assert.strictEqual(m.config.linkCuota, '');
   assert.ok(m.usuarios.length > 5);
 });
+
+test('cobros: la directiva activa link o transferencia por concepto', () => {
+  const db = C.dbEjemplo();
+  assert.ok(C.mediosDe(db, 'cuota').link && C.mediosDe(db, 'cuota').transferencia);
+  C.applyAction(db, DIR, { type: 'config.guardar', payload: { medios: { cuota: { link: false, transferencia: true }, federativo: { link: true, transferencia: false } } } });
+  assert.strictEqual(C.mediosDe(db, 'cuota').link, '');
+  assert.strictEqual(C.mediosDe(db, 'federativo').transferencia, false);
+  assert.throws(() => C.applyAction(db, DIR, { type: 'cobro.guardar', payload: { nombre: 'Viaje', monto: 5000, usarLink: true } }), /link/);
+  C.applyAction(db, DIR, { type: 'cobro.guardar', payload: { nombre: 'Viaje Temuco', monto: 40000, usarTransferencia: true, categorias: ['Infantil Femenino'] } });
+  const viaje = db.cobros.find((c) => c.nombre === 'Viaje Temuco');
+  assert.deepStrictEqual(C.mediosDe(db, viaje.id), { link: '', transferencia: true });
+  assert.throws(() => C.applyAction(db, ENT, { type: 'cobro.guardar', payload: { nombre: 'X', monto: 1 } }), /permiso/);
+  // Sólo lo ven los jugadores de esa categoría.
+  firmar(db, JUG);
+  assert.ok(!C.viewFor(db, JUG).cobros.some((c) => c.id === viaje.id));
+  const sofia = db.usuarios.find((u) => u.nombre === 'Sofía Herrera');
+  assert.ok(C.viewFor(db, sofia.rut).cobros.some((c) => c.id === viaje.id));
+  assert.strictEqual(C.viewFor(db, ENT).cobros.length, 0);
+});
+
+test('el jugador informa un pago y la directiva lo aprueba o rechaza', () => {
+  const db = C.dbEjemplo();
+  const j = db.usuarios.find((u) => u.nombre === 'Sofía Herrera');
+  const mes = C.mesesAdeudados(db, j.rut, ANIO)[0];
+  const informar = (payload) => C.applyAction(db, j.rut, { type: 'pago.informar', payload: Object.assign({ anio: ANIO, monto: 18000, medio: 'Transferencia' }, payload) });
+  informar({ concepto: 'cuota', mes, detalle: 'Op 123' });
+  assert.throws(() => informar({ concepto: 'cuota', mes }), /revisando/);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'pago.revisar', payload: { id: db.pagosInformados[db.pagosInformados.length - 1].id, aprobar: true } }), /permiso/);
+  const info = db.pagosInformados.find((x) => x.rut === j.rut);
+  C.applyAction(db, DIR, { type: 'pago.revisar', payload: { id: info.id, aprobar: true } });
+  assert.ok(C.pagoMes(db, j.rut, ANIO, mes).pagado);
+  assert.throws(() => informar({ concepto: 'cuota', mes }), /ya aparece pagado/);
+  const poleron = db.cobros.find((c) => c.nombre.startsWith('Polerón'));
+  informar({ concepto: poleron.id });
+  const info2 = db.pagosInformados.find((x) => x.rut === j.rut && x.concepto === poleron.id);
+  C.applyAction(db, DIR, { type: 'pago.revisar', payload: { id: info2.id, aprobar: false, nota: 'No llegó la transferencia' } });
+  assert.strictEqual(info2.estado, 'rechazado');
+  assert.ok(!C.cobroPagado(db, poleron.id, j.rut));
+  // Cada jugador ve sólo sus pagos informados.
+  assert.ok(C.viewFor(db, j.rut).pagosInformados.every((x) => x.rut === j.rut));
+});
+
+test('chat: cada uno ve sólo sus conversaciones', () => {
+  const db = C.dbEjemplo();
+  firmar(db, JUG);
+  const otro = C.rutDesdeCuerpo(19876543);
+  C.applyAction(db, JUG, { type: 'chat.enviar', payload: { hilo: 'dir:' + JUG, texto: 'Hola directiva' } });
+  C.applyAction(db, JUG, { type: 'chat.enviar', payload: { hilo: 'ent:' + JUG, texto: 'Hola profe' } });
+  assert.throws(() => C.applyAction(db, JUG, { type: 'chat.enviar', payload: { hilo: 'dir:' + otro, texto: 'x' } }), /No puedes/);
+  assert.throws(() => C.applyAction(db, ENT, { type: 'chat.enviar', payload: { hilo: 'dir:' + JUG, texto: 'x' } }), /No puedes/);
+  C.applyAction(db, ENT, { type: 'chat.enviar', payload: { hilo: 'ent:' + JUG, texto: 'Hola Tomás' } });
+  C.applyAction(db, DIR, { type: 'chat.enviar', payload: { hilo: 'dir:' + JUG, texto: 'Hola Tomás' } });
+  const vj = C.viewFor(db, JUG);
+  assert.ok(vj.mensajes.every((m) => m.hilo === 'dir:' + JUG || m.hilo === 'ent:' + JUG));
+  assert.strictEqual(vj.mensajes.length, 4);
+  assert.ok(C.viewFor(db, DIR).mensajes.every((m) => m.hilo.startsWith('dir:')));
+  assert.ok(!C.viewFor(db, otro).mensajes.some((m) => m.hilo.endsWith(JUG)));
+  C.applyAction(db, JUG, { type: 'chat.leer', payload: { hilo: 'ent:' + JUG } });
+  assert.ok(db.mensajes.filter((m) => m.hilo === 'ent:' + JUG).every((m) => m.leidoPor.includes(JUG)));
+});
+
+test('convocatoria: cuerpo técnico sólo con los cargos que tienen nombre', () => {
+  const db = C.dbEjemplo();
+  const m = db.partidos[0];
+  C.applyAction(db, ENT, { type: 'citacion.guardar', payload: { id: m.id, ruts: Object.keys(m.citados), cuerpoTecnico: { entrenadorA: 'Jorge Pérez', entrenadorB: '', kinesiologo: 'Paula Soto', otro: 'x' } } });
+  assert.deepStrictEqual(m.cuerpoTecnico, { entrenadorA: 'Jorge Pérez', kinesiologo: 'Paula Soto' });
+});
+
+test('jugadas: los entrenadores las guardan y las comparten con categorías', () => {
+  const db = C.dbEjemplo();
+  const pasos = [{ fichas: [{ id: 'CE', t: 'a', n: 'CE', x: 99, y: -3 }], trazos: [{ t: 'pase', p: [[1, 1], [2, 2]] }, { t: 'mov', p: [[1, 1]] }] }];
+  assert.throws(() => C.applyAction(db, JUG, { type: 'jugada.guardar', payload: { nombre: 'X', pasos } }), /permiso|consentimiento/);
+  C.applyAction(db, ENT, { type: 'jugada.guardar', payload: { nombre: 'Salida rápida', pasos, categorias: ['Infantil Femenino'] } });
+  const j = db.jugadas.find((x) => x.nombre === 'Salida rápida');
+  assert.deepStrictEqual([j.pasos[0].fichas[0].x, j.pasos[0].fichas[0].y], [40, 0]);
+  assert.strictEqual(j.pasos[0].trazos.length, 1);
+  const sofia = db.usuarios.find((u) => u.nombre === 'Sofía Herrera');
+  assert.ok(C.viewFor(db, sofia.rut).jugadas.some((x) => x.id === j.id));
+  assert.ok(!C.viewFor(db, C.rutDesdeCuerpo(19876543)).jugadas.some((x) => x.id === j.id));
+  assert.throws(() => C.applyAction(db, 'usr:tomas', { type: 'jugada.eliminar', payload: { id: j.id } }), /permiso/);
+  C.applyAction(db, DIR, { type: 'jugada.eliminar', payload: { id: j.id } });
+});

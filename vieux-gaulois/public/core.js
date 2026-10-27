@@ -229,11 +229,86 @@
       .sort((a, b) => (a.id === 'consentimiento' ? -1 : b.id === 'consentimiento' ? 1 : 0));
   }
 
+  // ---------- Cobros y medios de pago ----------
+  // La directiva decide, por concepto, si se paga con link, con transferencia o con ambos.
+  // "cuota" y "federativo" son fijos; los demás cobros (torneos, indumentaria...) se crean en db.cobros.
+
+  function cobroAplica(cobro, jugador) {
+    return !!cobro && cobro.activo !== false && (!cobro.categorias || !cobro.categorias.length || cobro.categorias.includes(jugador.categoria));
+  }
+
+  function cobroPagado(db, cobroId, rut) {
+    return !!(db.pagosCobro && db.pagosCobro[cobroId] && db.pagosCobro[cobroId][rut] && db.pagosCobro[cobroId][rut].pagado);
+  }
+
+  // Devuelve { link, transferencia } habilitados para un concepto ("cuota", "federativo" o id de cobro).
+  function mediosDe(db, concepto) {
+    const c = db.config;
+    const conTransf = (on) => !!(on && c.datosTransferencia);
+    if (concepto === 'cuota' || concepto === 'federativo') {
+      const m = (c.medios && c.medios[concepto]) || { link: true, transferencia: true };
+      const l = concepto === 'cuota' ? c.linkCuota : c.linkFederativo;
+      return { link: m.link !== false && l ? l : '', transferencia: conTransf(m.transferencia !== false) };
+    }
+    const cobro = (db.cobros || []).find((x) => x.id === concepto);
+    if (!cobro) return { link: '', transferencia: false };
+    return { link: cobro.usarLink && cobro.link ? cobro.link : '', transferencia: conTransf(cobro.usarTransferencia) };
+  }
+
+  // ---------- Chat ----------
+  // Conversaciones: "dir:<id>" entre un jugador o entrenador y la directiva;
+  // "ent:<rut>" entre un jugador y los entrenadores.
+
+  function puedeVerHilo(db, actor, hilo) {
+    const m = /^(dir|ent):(.+)$/.exec(String(hilo || ''));
+    if (!m) return false;
+    const otro = buscarUsuario(db, m[2]);
+    if (!otro) return false;
+    if (m[1] === 'dir') return otro.rol !== 'directiva' && (actor.rol === 'directiva' || actor.rut === otro.rut);
+    return otro.rol === 'jugador' && (actor.rol === 'entrenador' || actor.rut === otro.rut);
+  }
+
+  // ---------- Convocatoria: cuerpo técnico ----------
+  const CUERPO_TECNICO = [
+    ['entrenadorA', 'Entrenador A'], ['entrenadorB', 'Entrenador B'], ['entrenadorC', 'Entrenador C'],
+    ['kinesiologo', 'Kinesiólogo/a'], ['enfermero', 'Enfermero/a'],
+  ];
+
+  // ---------- Jugadas (pizarra táctica) ----------
+  // Coordenadas en metros de la cancha: x de 0 a 40, y de 0 a 20. Atacamos hacia el arco de x = 40.
+
+  // Ataque 6 contra defensa 6:0 con arquero; el balón en manos del central.
+  const ATAQUE_BASE = [['EI', 38, 1.6], ['LI', 29, 5], ['CE', 27.5, 10], ['LD', 29, 15], ['ED', 38, 18.4], ['PIV', 35.3, 12.4]];
+  const DEFENSA_BASE = [[34.6, 3.2], [34, 6.6], [33.7, 9], [33.7, 11.2], [34, 13.6], [34.6, 16.9], [39.2, 10]];
+
+  // mueve = { CE: [x, y] } cambia la posición de esas fichas; balon = [x, y].
+  function formacionInicial(mueve, balon) {
+    mueve = mueve || {};
+    return ATAQUE_BASE.map(([n, x, y]) => ({ id: n, t: 'a', n, x: mueve[n] ? mueve[n][0] : x, y: mueve[n] ? mueve[n][1] : y }))
+      .concat(DEFENSA_BASE.map(([x, y], i) => ({ id: 'd' + i, t: 'd', n: i === 6 ? 'AR' : String(i + 1), x, y })))
+      .concat([{ id: 'bal', t: 'b', n: '', x: balon ? balon[0] : 28.3, y: balon ? balon[1] : 10.6 }]);
+  }
+
+  function limpiarJugada(pasos) {
+    if (!Array.isArray(pasos) || !pasos.length) throw err('La jugada no tiene pasos');
+    const coord = (v, max) => Math.round(Math.min(max, Math.max(0, Number(v) || 0)) * 100) / 100;
+    return pasos.slice(0, 30).map((paso) => ({
+      fichas: (Array.isArray(paso && paso.fichas) ? paso.fichas : []).slice(0, 20).map((f) => ({
+        id: texto(f.id, 12) || uid().slice(-6), t: ['a', 'd', 'b'].includes(f.t) ? f.t : 'a', n: texto(f.n, 3), x: coord(f.x, 40), y: coord(f.y, 20),
+      })),
+      trazos: (Array.isArray(paso && paso.trazos) ? paso.trazos : []).slice(0, 30).map((t) => ({
+        t: ['mov', 'pase', 'lanz', 'libre'].includes(t.t) ? t.t : 'libre',
+        p: (Array.isArray(t.p) ? t.p : []).slice(0, 120).map((q) => [coord(q && q[0], 40), coord(q && q[1], 20)]),
+      })).filter((t) => t.p.length >= 2),
+    }));
+  }
+
   // Completa una base guardada con una versión anterior de la app (sin borrar datos).
   function migrar(db) {
     const base = dbVacia();
     if (db.version >= base.version) return db;
-    ['avisos', 'firmas', 'movimientos', 'convenios'].forEach((k) => { db[k] = db[k] || []; });
+    ['avisos', 'firmas', 'movimientos', 'convenios', 'cobros', 'pagosInformados', 'mensajes', 'jugadas'].forEach((k) => { db[k] = db[k] || []; });
+    db.pagosCobro = db.pagosCobro || {};
     db.documentos = db.documentos || base.documentos;
     Object.keys(base.config).forEach((k) => { if (db.config[k] == null) db.config[k] = base.config[k]; });
     if (!db.config.categoriasBase || !db.config.categoriasBase.length) {
@@ -250,7 +325,7 @@
   function dbVacia() {
     const anio = new Date().getFullYear();
     return {
-      version: 3,
+      version: 4,
       config: {
         club: 'Vieux Gaulois Handball',
         temporada: anio,
@@ -263,6 +338,7 @@
         linkCuota: '',
         linkFederativo: '',
         datosTransferencia: '',
+        medios: { cuota: { link: true, transferencia: true }, federativo: { link: true, transferencia: true } },
         indicacionesCitacion: 'Llevar carnet, calcetas negras, short negro, botella de agua y toalla de mano.',
       },
       usuarios: [Object.assign({ creado: hoyISO() }, CUENTA_DIRECTIVA)],
@@ -276,6 +352,11 @@
       avisos: [],
       documentos: [Object.assign({ version: 1, creado: hoyISO() }, clone(CONSENTIMIENTO))],
       firmas: [],
+      cobros: [],
+      pagosCobro: {},
+      pagosInformados: [],
+      mensajes: [],
+      jugadas: [],
     };
   }
 
@@ -407,6 +488,37 @@
       { id: uid(), empresa: 'Tienda Handball Pro', beneficio: '15% en zapatillas y balones', detalle: 'Código VIEUXGAULOIS en tienda online.' },
       { id: uid(), empresa: 'Gimnasio Fuerza Total', beneficio: 'Matrícula gratis y 10% mensual', detalle: 'Válido para jugadores con cuotas al día.' }
     );
+
+    // Otros cobros: uno con link y transferencia, otro sólo con transferencia.
+    const torneo = { id: uid(), nombre: 'Torneo Nacional Cadetes', monto: 25000, categorias: [CAD], link: 'https://www.webpay.cl/form-pay/ejemplo-torneo', usarLink: true, usarTransferencia: true, vence: sumarDias(hoy, 14), activo: true, creado: hoy };
+    const poleron = { id: uid(), nombre: 'Polerón oficial del club', monto: 18000, categorias: [], link: '', usarLink: false, usarTransferencia: true, vence: '', activo: true, creado: hoy };
+    db.cobros.push(torneo, poleron);
+    db.pagosCobro[torneo.id] = { [jugadores[6].rut]: { pagado: true, monto: 25000, fecha: hoy, metodo: 'Link de pago' } };
+    db.pagosCobro[poleron.id] = { [jugadores[3].rut]: { pagado: true, monto: 18000, fecha: hoy, metodo: 'Transferencia' } };
+
+    // Un pago informado por un jugador, esperando revisión de la directiva.
+    const debe = mesesAdeudados(db, jugadores[2].rut, anio)[0];
+    if (debe != null) {
+      db.pagosInformados.push({ id: uid(), rut: jugadores[2].rut, concepto: 'cuota', anio, mes: debe, monto: cuotaDe(db, jugadores[2]), fecha: hoy, medio: 'Transferencia', detalle: 'Transferencia desde Banco Chile, N° operación 884512', estado: 'pendiente', creado: hoy });
+    }
+
+    // Conversaciones de ejemplo.
+    const msj = (hilo, de, txt, minutos, leidoPor) => db.mensajes.push({ id: uid(), hilo, de, texto: txt, fecha: new Date(Date.now() - minutos * 60e3).toISOString(), leidoPor });
+    msj('dir:' + jugadores[4].rut, jugadores[4].rut, 'Hola, ¿puedo pagar la cuota de octubre en dos partes?', 300, [jugadores[4].rut]);
+    msj('dir:' + jugadores[4].rut, 'usr:vieux', 'Hola Valentina, sí. Informa cada pago desde Finanzas en la app.', 240, ['usr:vieux']);
+    msj('ent:' + jugadores[6].rut, jugadores[6].rut, 'Profe, el domingo llego directo al gimnasio, ¿hay problema?', 90, [jugadores[6].rut]);
+    msj('dir:usr:jorge', 'usr:jorge', 'Necesitamos 10 balones nuevos para los Cadetes.', 60, ['usr:jorge']);
+
+    // Jugada de ejemplo: cruce central-lateral derecho y lanzamiento.
+    db.jugadas.push({
+      id: uid(), nombre: 'Cruce central - lateral derecho', descripcion: 'El central fija hacia la derecha, el lateral derecho cruza por detrás, recibe y lanza.',
+      categorias: [CAD, PE, 'Primer Equipo Femenino'], autor: 'usr:jorge', fecha: hoy, cancha: 'media',
+      pasos: [
+        { fichas: formacionInicial(), trazos: [{ t: 'mov', p: [[27.5, 10], [30, 13]] }, { t: 'mov', p: [[29, 15], [30.5, 9.2]] }] },
+        { fichas: formacionInicial({ CE: [30, 13], LD: [30.5, 9.2] }, [30.6, 13.5]), trazos: [{ t: 'pase', p: [[30, 13], [30.5, 9.2]] }] },
+        { fichas: formacionInicial({ CE: [30, 13], LD: [31.2, 9.4] }, [31.6, 9.8]), trazos: [{ t: 'lanz', p: [[31.2, 9.4], [39.6, 10.8]] }] },
+      ],
+    });
 
     db.movimientos.push(
       { id: uid(), fecha: hoyISO(new Date(anio, 2, 1)), tipo: 'gasto', concepto: 'Arriendo gimnasio marzo', monto: 180000 },
@@ -714,6 +826,12 @@
           nuevos[rut] = m.citados[rut] || 'pendiente';
         });
         m.citados = nuevos;
+        if (p.cuerpoTecnico && typeof p.cuerpoTecnico === 'object') {
+          // Sólo quedan en la convocatoria los cargos con nombre.
+          const ct = {};
+          CUERPO_TECNICO.forEach(([k]) => { const n = texto(p.cuerpoTecnico[k], 60); if (n) ct[k] = n; });
+          m.cuerpoTecnico = ct;
+        }
         m.citacionFecha = hoyISO();
         m.citadoPor = actor.rut;
         break;
@@ -747,6 +865,12 @@
         if (p.linkCuota != null) c.linkCuota = link(p.linkCuota);
         if (p.linkFederativo != null) c.linkFederativo = link(p.linkFederativo);
         if (p.datosTransferencia != null) c.datosTransferencia = texto(p.datosTransferencia, 500);
+        if (p.medios && typeof p.medios === 'object') {
+          c.medios = c.medios || {};
+          ['cuota', 'federativo'].forEach((k) => {
+            if (p.medios[k]) c.medios[k] = { link: !!p.medios[k].link, transferencia: !!p.medios[k].transferencia };
+          });
+        }
         if (p.indicacionesCitacion != null) c.indicacionesCitacion = texto(p.indicacionesCitacion, 300);
         if (p.montoFederativo != null) c.montoFederativo = num(p.montoFederativo, 0, 10000000) || 0;
         if (Array.isArray(p.mesesCobro)) c.mesesCobro = p.mesesCobro.map(Number).filter((m) => m >= 0 && m <= 11).sort((a, b) => a - b);
@@ -793,6 +917,139 @@
       case 'movimiento.eliminar': {
         exigir(esDir);
         db.movimientos = db.movimientos.filter((x) => x.id !== p.id);
+        break;
+      }
+
+      // ----- Otros cobros (torneos, indumentaria, viajes...) -----
+      case 'cobro.guardar': {
+        exigir(esDir);
+        const nombre = texto(p.nombre, 80);
+        const monto = num(p.monto, 0, 10000000);
+        if (!nombre) throw err('Indica el concepto del cobro');
+        if (!monto) throw err('Indica el monto');
+        if (p.vence && !fechaValida(p.vence)) throw err('Fecha de vencimiento no válida');
+        const datos = {
+          nombre, monto, link: link(p.link), usarLink: !!p.usarLink, usarTransferencia: !!p.usarTransferencia, vence: p.vence || '',
+          categorias: (Array.isArray(p.categorias) ? p.categorias : []).filter((c) => db.config.categorias.includes(c)),
+          activo: p.activo == null ? true : !!p.activo,
+        };
+        if (datos.usarLink && !datos.link) throw err('Agrega el link de pago o desactiva esa opción');
+        if (p.id) {
+          const c = db.cobros.find((x) => x.id === p.id);
+          if (!c) throw err('Cobro no encontrado');
+          Object.assign(c, datos);
+        } else {
+          db.cobros.push(Object.assign({ id: uid(), creado: hoyISO() }, datos));
+        }
+        break;
+      }
+      case 'cobro.eliminar': {
+        exigir(esDir);
+        db.cobros = db.cobros.filter((x) => x.id !== p.id);
+        delete db.pagosCobro[p.id];
+        break;
+      }
+      case 'cobro.marcar': {
+        exigir(esDir);
+        const c = db.cobros.find((x) => x.id === p.id);
+        if (!c) throw err('Cobro no encontrado');
+        const j = buscarJugador(db, p.rut);
+        db.pagosCobro[c.id] = db.pagosCobro[c.id] || {};
+        if (p.pagado) db.pagosCobro[c.id][j.rut] = { pagado: true, monto: p.monto != null && p.monto !== '' ? num(p.monto, 0) : c.monto, fecha: fechaValida(p.fecha) ? p.fecha : hoyISO(), metodo: texto(p.metodo, 40) || 'Transferencia' };
+        else delete db.pagosCobro[c.id][j.rut];
+        break;
+      }
+
+      // ----- El jugador informa un pago; la directiva lo aprueba o rechaza -----
+      case 'pago.informar': {
+        exigir(rol === 'jugador');
+        const concepto = String(p.concepto || '');
+        const anioP = anio || new Date().getFullYear();
+        const info = { id: uid(), rut: actor.rut, concepto, anio: anioP, mes: null, fecha: fechaValida(p.fecha) ? p.fecha : hoyISO(), estado: 'pendiente', creado: hoyISO() };
+        if (concepto === 'cuota') {
+          const mes = num(p.mes, 0, 11);
+          if (mes == null || !db.config.mesesCobro.includes(mes)) throw err('Elige el mes que pagaste');
+          if ((pagoMes(db, actor.rut, anioP, mes) || {}).pagado) throw err('Ese mes ya aparece pagado');
+          info.mes = mes;
+        } else if (concepto === 'federativo') {
+          if (federativoPagado(db, actor.rut, anioP)) throw err('El federativo ya aparece pagado');
+        } else {
+          const c = (db.cobros || []).find((x) => x.id === concepto);
+          if (!cobroAplica(c, actor)) throw err('Concepto no válido');
+          if (cobroPagado(db, c.id, actor.rut)) throw err('Ese cobro ya aparece pagado');
+        }
+        if (db.pagosInformados.some((x) => x.rut === actor.rut && x.estado === 'pendiente' && x.concepto === concepto && x.mes === info.mes && x.anio === anioP)) {
+          throw err('Ya informaste ese pago; la directiva lo está revisando');
+        }
+        info.monto = num(p.monto, 0, 10000000);
+        if (!info.monto) throw err('Indica el monto pagado');
+        info.medio = ['Transferencia', 'Link de pago', 'Efectivo'].includes(p.medio) ? p.medio : 'Transferencia';
+        info.detalle = texto(p.detalle, 200);
+        db.pagosInformados.push(info);
+        break;
+      }
+      case 'pago.revisar': {
+        exigir(esDir);
+        const info = db.pagosInformados.find((x) => x.id === p.id);
+        if (!info) throw err('Pago informado no encontrado');
+        if (info.estado !== 'pendiente') throw err('Este pago ya fue revisado');
+        if (p.aprobar) {
+          const reg = { pagado: true, monto: info.monto, fecha: info.fecha, metodo: info.medio, registradoPor: actor.rut };
+          if (info.concepto === 'cuota') {
+            db.pagos[info.rut] = db.pagos[info.rut] || {};
+            db.pagos[info.rut][info.anio] = db.pagos[info.rut][info.anio] || {};
+            db.pagos[info.rut][info.anio][info.mes] = reg;
+          } else if (info.concepto === 'federativo') {
+            db.federativo[info.rut] = db.federativo[info.rut] || {};
+            db.federativo[info.rut][info.anio] = reg;
+          } else {
+            if (!db.cobros.some((x) => x.id === info.concepto)) throw err('El cobro ya no existe');
+            db.pagosCobro[info.concepto] = db.pagosCobro[info.concepto] || {};
+            db.pagosCobro[info.concepto][info.rut] = reg;
+          }
+        }
+        Object.assign(info, { estado: p.aprobar ? 'aprobado' : 'rechazado', nota: texto(p.nota, 200), revisadoPor: actor.rut, revisado: hoyISO() });
+        break;
+      }
+
+      // ----- Chat con la directiva y con los entrenadores -----
+      case 'chat.enviar': {
+        if (!puedeVerHilo(db, actor, p.hilo)) throw err('No puedes escribir en esta conversación');
+        const t = texto(p.texto, 1000);
+        if (!t) throw err('Escribe un mensaje');
+        db.mensajes.push({ id: uid(), hilo: p.hilo, de: actor.rut, texto: t, fecha: new Date().toISOString(), leidoPor: [actor.rut] });
+        break;
+      }
+      case 'chat.leer': {
+        if (!puedeVerHilo(db, actor, p.hilo)) throw err('Conversación no encontrada');
+        db.mensajes.forEach((m) => { if (m.hilo === p.hilo && !m.leidoPor.includes(actor.rut)) m.leidoPor.push(actor.rut); });
+        break;
+      }
+
+      // ----- Jugadas de la pizarra táctica -----
+      case 'jugada.guardar': {
+        exigir(esStaff);
+        const nombre = texto(p.nombre, 80);
+        if (!nombre) throw err('Ponle un nombre a la jugada');
+        const datos = {
+          nombre, descripcion: texto(p.descripcion, 500), cancha: p.cancha === 'completa' ? 'completa' : 'media', pasos: limpiarJugada(p.pasos),
+          categorias: (Array.isArray(p.categorias) ? p.categorias : []).filter((c) => db.config.categorias.includes(c)),
+        };
+        if (p.id) {
+          const j = db.jugadas.find((x) => x.id === p.id);
+          if (!j) throw err('Jugada no encontrada');
+          // Cualquier entrenador puede mejorar una jugada del club; borrarla sólo su autor o la directiva.
+          Object.assign(j, datos, { fecha: hoyISO() });
+        } else {
+          db.jugadas.push(Object.assign({ id: uid(), autor: actor.rut, fecha: hoyISO() }, datos));
+        }
+        break;
+      }
+      case 'jugada.eliminar': {
+        const j = db.jugadas.find((x) => x.id === p.id);
+        if (!j) throw err('Jugada no encontrada');
+        exigir(esDir || j.autor === actor.rut);
+        db.jugadas = db.jugadas.filter((x) => x.id !== p.id);
         break;
       }
 
@@ -946,11 +1203,16 @@
     const v = clone(db);
     v.usuarios.forEach((u) => { u.claveInicial = !u.claveHash; delete u.claveHash; });
     v.yo = rut;
+    // Cada uno ve sólo las conversaciones en que participa.
+    v.mensajes = (v.mensajes || []).filter((m) => puedeVerHilo(db, yo, m.hilo));
     if (yo.rol === 'directiva') return v;
 
     if (yo.rol === 'entrenador') {
       delete v.movimientos;
       v.pagos = {};
+      v.cobros = [];
+      v.pagosCobro = {};
+      v.pagosInformados = [];
       return v;
     }
 
@@ -966,6 +1228,12 @@
     v.documentos = v.documentos.filter((d) => documentoAplica(d, rut));
     v.firmas = v.firmas.filter((f) => f.rut === rut);
     delete v.movimientos;
+    v.cobros = (v.cobros || []).filter((c) => cobroAplica(c, yo));
+    const misCobros = {};
+    v.cobros.forEach((c) => { misCobros[c.id] = (db.pagosCobro[c.id] && db.pagosCobro[c.id][rut]) ? { [rut]: db.pagosCobro[c.id][rut] } : {}; });
+    v.pagosCobro = misCobros;
+    v.pagosInformados = (v.pagosInformados || []).filter((x) => x.rut === rut);
+    v.jugadas = (v.jugadas || []).filter((j) => (j.categorias || []).includes(yo.categoria));
     v.entrenamientos = entrenamientosDeCategoria(v, yo.categoria).map((e) => {
       const r = Object.assign({}, e, { miAsistencia: (e.asistencia || {})[rut] || null });
       delete r.asistencia;
@@ -991,6 +1259,7 @@
     hoyISO, sumarDias, edad, uid, clone,
     CATEGORIAS_BASE, RAMAS, CON_ANIO, armarCategorias, baseCategoria, ramaCategoria, llevaAnio, etiquetaCategoria,
     COMPROMISO_BECA, documentoAplica, firmaDe, documentosPendientes,
+    cobroAplica, cobroPagado, mediosDe, puedeVerHilo, CUERPO_TECNICO, limpiarJugada, formacionInicial,
     cuotaDe, federativoPagado, habilitado, pagoMes, mesesAdeudados, resumenAsistencia, entrenamientosDeCategoria,
     dbVacia, dbEjemplo, migrar, applyAction, viewFor,
     hashClave, verificarClave, cambiarClave, prepararAccion,

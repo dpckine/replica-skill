@@ -512,6 +512,88 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: 14px; }
 .doc-texto { margin-bottom: 4px; font-size: 15px; }
 .doc-texto summary { cursor: pointer; color: var(--primario); font-weight: 600; }
 
+/* Cobros y pagos */
+.btn.contorno { background: transparent; color: var(--primario); border: 1px solid var(--contorno); }
+.mes.informado { background: var(--alerta-cont); color: var(--alerta); }
+.tarjeta.cobro { box-shadow: var(--sombra-1); }
+.conv-ct { border-top: 1px solid var(--contorno-2); margin-top: 12px; padding-top: 10px; font-size: 15px; display: grid; gap: 2px; }
+.conv-ct b { color: var(--primario); margin-bottom: 2px; }
+.pdf-ct { margin-top: 18px; border-top: 1px solid #ddd; padding-top: 12px; font-size: 15px; }
+.pdf-ct p { margin: 3px 0; }
+
+/* ---------- Chat ---------- */
+.avatar-chat { width: 44px; height: 44px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 700; font-size: 15px; background: var(--primario-cont); color: var(--sobre-primario-cont); }
+.avatar-chat.dir { background: var(--marca-azul); color: var(--marca-oro); box-shadow: inset 0 0 0 2px var(--marca-oro); }
+.lista .crece > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
+.chat-meta small { font-size: 12px; }
+.btn-icono.atras { display: grid; place-items: center; width: 40px; height: 40px; margin-left: -8px; color: var(--primario); }
+.titulo-fila:has(.atras) { justify-content: flex-start; gap: 4px; }
+.titulo-fila:has(.atras) .titulo-grande { font-size: 22px; }
+.chat { display: flex; flex-direction: column; gap: 6px; padding-bottom: 12px; }
+.chat-dia { align-self: center; font-size: 12px; font-weight: 600; color: var(--suave); background: var(--sup-2); padding: 4px 12px; border-radius: 12px; margin: 10px 0 4px; }
+.burbuja { max-width: min(80%, 520px); align-self: flex-start; background: var(--sup-0); border-radius: 18px 18px 18px 6px; padding: 8px 12px 6px; box-shadow: var(--sombra-1); }
+.burbuja b { display: block; font-size: 12px; color: var(--secundario); margin-bottom: 2px; }
+.burbuja p { margin: 0; font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.burbuja small { display: block; text-align: right; font-size: 11px; margin-top: 2px; }
+.burbuja.mia { align-self: flex-end; background: var(--primario); color: var(--sobre-primario); border-radius: 18px 18px 6px 18px; }
+.burbuja.mia small { color: inherit; opacity: .75; }
+main.en-hilo { padding-bottom: calc(190px + var(--seguro-abajo)); }
+.chat-caja {
+  position: fixed; left: 0; right: 0; bottom: calc(80px + var(--seguro-abajo)); z-index: 19; display: flex; gap: 8px; align-items: flex-end;
+  padding: 10px 12px; background: var(--fondo); border-top: 1px solid var(--contorno-2);
+}
+.chat-caja textarea { flex: 1; min-height: 44px; max-height: 140px; resize: none; border: 0; border-radius: 22px; background: var(--sup-3); padding: 11px 16px; font-size: 16px; color: var(--texto); }
+.chat-caja textarea:focus { outline: 2px solid var(--primario); outline-offset: -2px; }
+.btn-enviar { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--secundario-cont); color: var(--sobre-secundario-cont); display: grid; place-items: center; cursor: pointer; flex: none; }
+.btn-enviar .ico { width: 22px; height: 22px; }
+@media (min-width: 900px) {
+  .chat-caja { left: 96px; bottom: 0; padding: 12px max(16px, calc((100vw - 96px - 820px) / 2 + 16px)); }
+  main.en-hilo { padding-bottom: 110px; }
+}
+
+/* ---------- Pizarra táctica ---------- */
+.piz-cab { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.piz-cab .crece b { display: block; font-size: 17px; }
+.piz-cab .crece small { display: block; font-size: 13px; color: var(--suave); }
+.piz-herr { display: flex; gap: 4px; overflow-x: auto; margin-bottom: 10px; padding-bottom: 2px; scrollbar-width: none; }
+.herr { flex: 1 0 auto; min-width: 60px; border: 0; background: var(--sup-2); color: var(--suave); border-radius: 12px; padding: 8px 6px 6px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.herr.activa { background: var(--terciario-cont); color: var(--sobre-terciario-cont); }
+.herr:disabled { opacity: .5; }
+.cancha-caja { border-radius: 18px; overflow: hidden; background: #0F2C66; box-shadow: var(--sombra-3); margin-bottom: 10px; }
+.cancha { display: block; width: 100%; max-height: 72vh; touch-action: none; user-select: none; -webkit-user-select: none; }
+.c-fuera { fill: #0F2C66; }
+.c-piso { fill: #2360B4; }
+.c-area { fill: #3F7FD3; }
+.c-9m { fill: none; stroke: #fff; stroke-width: .09; stroke-dasharray: .45 .35; opacity: .85; }
+.c-lineas rect, .c-lineas path { fill: none; stroke: #fff; stroke-width: .1; }
+.c-arcos rect { fill: rgba(255,255,255,.15); stroke: #fff; stroke-width: .14; }
+.trazos path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.trazos .hit { stroke: transparent; stroke-width: 1.2; }
+.t-mov { stroke: #FFD34D; stroke-width: .2; }
+.t-pase { stroke: #fff; stroke-width: .16; stroke-dasharray: .5 .35; }
+.t-lanz { stroke: #FF5A4E; stroke-width: .28; }
+.t-libre { stroke: #fff; stroke-width: .14; opacity: .9; }
+.temp path { fill: none; stroke-linecap: round; }
+.temp .hit { stroke: none; }
+.ficha { cursor: grab; }
+.ficha circle { stroke-width: .13; }
+.ficha text { letter-spacing: 0; font-size: .62px; font-weight: 800; fill: #fff; text-anchor: middle; dominant-baseline: central; pointer-events: none; font-family: inherit; }
+.f-a circle { fill: var(--marca-rojo); stroke: #fff; }
+.f-d circle { fill: #0B1A4A; stroke: var(--marca-oro); }
+.f-d text { fill: var(--marca-oro); }
+.f-b circle { fill: #F6D24A; stroke: #3A2A00; stroke-width: .09; }
+.piz-pasos { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.paso-chip { min-width: 36px; height: 36px; border-radius: 18px; border: 1px solid var(--contorno-2); background: var(--sup-0); color: var(--texto); font-weight: 700; cursor: pointer; padding: 0 10px; }
+.paso-chip.activo { background: var(--primario); border-color: var(--primario); color: var(--sobre-primario); }
+.paso-chip.mas { color: var(--primario); font-weight: 600; }
+.piz-acciones { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 4px; }
+.punto-f { display: inline-block; width: 12px; height: 12px; border-radius: 50%; }
+.punto-f.f-a { background: var(--marca-rojo); } .punto-f.f-d { background: #0B1A4A; box-shadow: inset 0 0 0 2px var(--marca-oro); } .punto-f.f-b { background: #F6D24A; width: 9px; height: 9px; }
+.piz-ayuda { padding: 6px 4px 18px; }
+.ley { display: inline-block; width: 22px; height: 0; vertical-align: middle; border-top: 3px solid #E0A81E; margin: 0 2px; }
+.ley.pase { border-top: 2px dashed var(--contorno); } .ley.lanz { border-top-color: #E5392F; border-top-width: 4px; }
+
 /* ---------- Diálogos y hojas inferiores ---------- */
 .modal { position: fixed; inset: 0; background: var(--velo); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; animation: aparecer .2s ease; }
 .modal[hidden] { display: none; }

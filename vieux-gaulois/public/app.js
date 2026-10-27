@@ -67,6 +67,7 @@
   const S = {
     modo: null, demo: false, view: null, tab: null,
     filtroCat: leerLS('vg_cat') || '', busqueda: '', anioFin: ANIO, verInactivos: false, verPasados: false,
+    hilo: null, borrador: {}, piz: null,
   };
 
   // ---------- Backend: servidor real o modo demo local ----------
@@ -195,6 +196,21 @@
     perfil: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
     mas: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
     mas2: '<path d="M12 5v14M5 12h14"/>',
+    chat: '<path d="M20 15a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/>',
+    pizarra: '<rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M12 4v13M3 10.5h3.5v0M17.5 10.5H21M9 21l3-4 3 4"/>',
+    jugadas: '<circle cx="6" cy="17" r="2.5"/><path d="M8.5 15.2C12 12.5 13 9 18 6.5"/><path d="M14.5 6h3.7v3.7"/><path d="M15 15l4 4m0-4l-4 4"/>',
+    enviar: '<path d="M4 12l16-8-6 16-3-6.5z"/><path d="M11 13.5L20 4"/>',
+    atras: '<path d="M15 5l-7 7 7 7"/>',
+    deshacer: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+    play: '<path d="M7 4.5v15l12.5-7.5z"/>',
+    mover: '<path d="M12 3v18M3 12h18M9.5 5.5L12 3l2.5 2.5M9.5 18.5L12 21l2.5-2.5M5.5 9.5L3 12l2.5 2.5M18.5 9.5L21 12l-2.5 2.5"/>',
+    lapiz: '<path d="M4 20l4-1L19 8l-3-3L5 16z"/><path d="M14 7l3 3"/>',
+    goma: '<path d="M8 20h12M5.5 15.5l9-9 5 5-8.5 8.5H9.5z"/><path d="M10 11l5 5"/>',
+    movimiento: '<path d="M5 19L18 6"/><path d="M11 6h7v7"/>',
+    pase: '<path d="M5 19L18 6" stroke-dasharray="2.6 2.6"/><path d="M11 6h7v7"/>',
+    lanzamiento: '<path d="M5 19L18 6" stroke-width="3.2"/><path d="M11 6h7v7" stroke-width="3.2"/>',
+    guardar: '<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
+    basura: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     claro: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     oscuro: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
     auto: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
@@ -332,14 +348,16 @@
   const NOMBRES = {
     inicio: 'Inicio', avisos: 'Avisos', jugadores: 'Jugadores', finanzas: 'Finanzas', entrenamientos: 'Entrenamientos', partidos: 'Partidos',
     lesiones: 'Lesiones', documentos: 'Documentos', convenios: 'Convenios', ajustes: 'Ajustes', calendario: 'Calendario', perfil: 'Mi perfil', mas: 'Más',
+    chat: 'Mensajes', pizarra: 'Pizarra', jugadas: 'Jugadas',
   };
   const TABS = {
-    directiva: { barra: ['inicio', 'jugadores', 'finanzas', 'partidos'], mas: ['avisos', 'entrenamientos', 'lesiones', 'documentos', 'convenios', 'calendario', 'ajustes'] },
-    entrenador: { barra: ['inicio', 'jugadores', 'entrenamientos', 'partidos'], mas: ['avisos', 'lesiones', 'calendario'] },
-    jugador: { barra: ['perfil', 'avisos', 'calendario'], mas: [] },
+    directiva: { barra: ['inicio', 'jugadores', 'finanzas', 'chat'], mas: ['partidos', 'entrenamientos', 'pizarra', 'avisos', 'lesiones', 'documentos', 'convenios', 'calendario', 'ajustes'] },
+    entrenador: { barra: ['inicio', 'jugadores', 'partidos', 'pizarra'], mas: ['entrenamientos', 'chat', 'avisos', 'lesiones', 'calendario'] },
+    jugador: { barra: ['perfil', 'finanzas', 'chat', 'avisos'], mas: ['calendario', 'jugadas', 'convenios'] },
   };
   const permitidas = () => { const t = TABS[rol()]; return t.barra.concat(t.mas, t.mas.length ? ['mas'] : []); };
-  const contador = (tab) => (tab === 'lesiones' ? sinVer().length : tab === 'avisos' ? avisosNuevos() : tab === 'mas' ? TABS[rol()].mas.reduce((s, t) => s + contador(t), 0) : 0);
+  const contador = (tab) => (tab === 'lesiones' ? sinVer().length : tab === 'avisos' ? avisosNuevos() : tab === 'chat' ? chatSinLeer()
+    : tab === 'finanzas' && esDir() ? informesPendientes().length : tab === 'mas' ? TABS[rol()].mas.reduce((s, t) => s + contador(t), 0) : 0);
 
   const BOTON_TITULO = {
     jugadores: () => esStaff() && '<button class="btn-redondo" data-act="nuevoJugador" aria-label="Inscribir jugador">' + icono('mas2') + '</button>',
@@ -348,7 +366,9 @@
     avisos: () => esStaff() && '<button class="btn-redondo" data-act="nuevoAviso" aria-label="Nuevo aviso">' + icono('mas2') + '</button>',
     lesiones: () => '<button class="btn-redondo" data-act="lesionPara" aria-label="Registrar lesión">' + icono('mas2') + '</button>',
     convenios: () => '<button class="btn-redondo" data-act="nuevoConvenio" aria-label="Nuevo convenio">' + icono('mas2') + '</button>',
-    finanzas: () => '<button class="btn-redondo" data-act="nuevoMovimiento" aria-label="Registrar ingreso o gasto">' + icono('mas2') + '</button>',
+    finanzas: () => (esDir() ? '<button class="btn-redondo" data-act="nuevoMovimiento" aria-label="Registrar ingreso o gasto">' + icono('mas2') + '</button>'
+      : '<button class="btn-redondo" data-act="informarPago" aria-label="Informar un pago">' + icono('mas2') + '</button>'),
+    chat: () => esStaff() && !S.hilo && '<button class="btn-redondo" data-act="nuevoChat" aria-label="Nuevo mensaje">' + icono('mas2') + '</button>',
   };
 
   function shell(contenido) {
@@ -366,7 +386,9 @@
       botonTema() + '<button class="avatar" data-act="cuenta" aria-label="Mi cuenta">' + h(iniciales) + '</button></header>' +
       '<div class="franja" aria-hidden="true"><i></i><i></i><i></i></div>' +
       (S.modo === 'local' ? '<div class="modo-demo">Modo demo · los datos se guardan sólo en este navegador</div>' : '') +
-      '<main><div class="titulo-fila"><h1 class="titulo-grande">' + h(NOMBRES[S.tab]) + '</h1></div>' + contenido + '</main>' +
+      '<main class="tab-' + S.tab + (S.tab === 'chat' && S.hilo ? ' en-hilo' : '') + '"><div class="titulo-fila">' +
+      (S.tab === 'chat' && S.hilo ? '<button class="btn-icono atras" data-act="cerrarHilo" aria-label="Volver">' + icono('atras') + '</button><h1 class="titulo-grande">' + h(tituloHilo(S.hilo)) + '</h1>'
+        : '<h1 class="titulo-grande">' + h(NOMBRES[S.tab]) + '</h1>') + '</div>' + contenido + '</main>' +
       (botonTitulo ? '<div class="fab-zona">' + botonTitulo + '</div>' : '') +
       '<nav class="tabbar" aria-label="Secciones">' + barra + '</nav>';
   }
@@ -444,7 +466,6 @@
         '<div class="kpi"><small>Firmas pendientes</small><b>' + pendFirmas + '</b></div>';
     }
     const semana = proximos(S.view.entrenamientos).filter((e) => e.fecha <= C.sumarDias(HOY, 7));
-    const ult = avisos().slice(0, 2);
     const hero = '<section class="perfil bienvenida"><div class="perfil-fila"><img class="hero-escudo" src="' + ESCUDO + '" alt=""><div class="crece">' +
       '<small class="hero-sub">Temporada ' + ANIO + '</small><h2>Hola, ' + h(yo().nombre.split(/\s+/)[0]) + '</h2>' +
       '<p>' + (prox ? 'Próximo partido: ' + h(prox.categoria) + ' vs ' + h(prox.rival) + ' · ' + h(fCorta(prox.fecha)) + ' ' + h(prox.hora) + ' hrs' : 'No hay partidos programados') + '</p></div></div></section>';
@@ -452,8 +473,8 @@
       seccion('Lesiones y dolores sin revisar', nuevas.length ? '<ul class="lista">' + nuevas.map(itemLesion).join('') + '</ul>' : vacio('No hay reportes nuevos.'),
         nuevas.length ? btnTexto('Marcar revisado', 'lesionVistoTodo') : '') +
       seccion('Próximo partido', prox ? tarjetaPartido(prox) : vacio('No hay partidos programados.'), btnTexto('Ver todos', 'tab', 'data-tab="partidos"')) +
-      seccion('Esta semana', semana.length ? '<ul class="lista">' + semana.map(itemEntrenamiento).join('') + '</ul>' : vacio('Sin entrenamientos en los próximos 7 días.'), btnTexto('Ver todos', 'tab', 'data-tab="entrenamientos"')) +
-      seccion('Avisos', ult.length ? ult.map((a) => tarjetaAviso(a, true)).join('') : vacio('Sin avisos.'), btnTexto('Ver todos', 'tab', 'data-tab="avisos"'));
+      (esDir() && informesPendientes().length ? seccion('Pagos informados por revisar', '<ul class="lista">' + informesPendientes().map(itemInforme).join('') + '</ul>', btnTexto('Finanzas', 'tab', 'data-tab="finanzas"')) : '') +
+      seccion('Esta semana', semana.length ? '<ul class="lista">' + semana.map(itemEntrenamiento).join('') + '</ul>' : vacio('Sin entrenamientos en los próximos 7 días.'), btnTexto('Ver todos', 'tab', 'data-tab="entrenamientos"'));
   }
 
   // ---------- Jugadores ----------
@@ -553,7 +574,9 @@
     const gastos = movs.filter((m) => m.tipo === 'gasto').reduce((s, m) => s + m.monto, 0);
     const balance = recaudado + fedMonto + ingresos - gastos;
 
+    const pend = informesPendientes();
     return '<div class="filtros">' + segmentado('anioFin', anio, [[ANIO - 1, ANIO - 1], [ANIO, ANIO], [ANIO + 1, ANIO + 1]]) + filtroCategoria() + '</div>' +
+      (pend.length ? seccion('Pagos informados por revisar', '<ul class="lista">' + pend.map(itemInforme).join('') + '</ul>', '', 'Al aprobar, el pago queda registrado automáticamente.') : '') +
       '<div class="kpis">' +
       '<div class="kpi verde"><small>Cuotas recaudadas</small><b>' + clp(recaudado) + '</b><small>de ' + clp(esperado) + ' vencido</small></div>' +
       '<div class="kpi rojo"><small>Cuotas vencidas</small><b>' + clp(Math.max(0, esperado - recaudado)) + '</b></div>' +
@@ -561,9 +584,64 @@
       '<div class="kpi"><small>Otros ingresos − gastos</small><b>' + clp(ingresos - gastos) + '</b></div>' +
       '<div class="kpi ' + (balance >= 0 ? 'verde' : 'rojo') + '"><small>Balance ' + anio + '</small><b>' + clp(balance) + '</b></div></div>' +
       seccion('Mensualidades y federativo', js.length ? '<div class="tabla-envoltura"><table class="tabla matriz"><thead><tr><th>Jugador</th><th class="c">Fed</th>' + C.MESES.map((m) => '<th class="c">' + m + '</th>').join('') + '<th class="num">Deuda</th></tr></thead><tbody>' + filas + '</tbody></table></div>' : vacio('No hay jugadores.'),
-        btnTexto('Precios y links', 'tab', 'data-tab="ajustes"'), 'Toca una casilla para registrar o anular un pago. ✓ pagado · ! vencido · vacío por vencer · punto = mes sin cobro. <b>Fed</b> = federativo (habilita para jugar).') +
+        btnTexto('Precios', 'tab', 'data-tab="ajustes"'), 'Toca una casilla para registrar o anular un pago. ✓ pagado · ! vencido · vacío por vencer · punto = mes sin cobro. <b>Fed</b> = federativo (habilita para jugar).') +
+      seccionCobros() +
       seccion('Otros ingresos y gastos', movs.length ? '<ul class="lista">' + movs.map((m) => '<li><div class="crece"><b>' + h(m.concepto) + '</b><small>' + fCorta(m.fecha) + '</small></div><b class="' + (m.tipo === 'gasto' ? 'rojo' : 'verde') + '">' + (m.tipo === 'gasto' ? '−' : '+') + clp(m.monto) + '</b><button class="btn-icono" data-act="borrarMovimiento" data-id="' + m.id + '" aria-label="Eliminar">&times;</button></li>').join('') + '</ul>' : vacio('Sin movimientos este año.'),
         btnTexto('Registrar', 'nuevoMovimiento'));
+  }
+
+  // Cobros: por cada concepto la directiva activa link de pago, transferencia o ambos.
+  function seccionCobros() {
+    const medios = (c) => {
+      const m = C.mediosDe(S.view, c);
+      return (m.link ? insignia('Link de pago', 'ok') : insignia('Sin link')) + (m.transferencia ? insignia('Transferencia', 'ok') : insignia('Sin transferencia'));
+    };
+    const js = jugadores();
+    const fila = (id, nombre, detalle, extra) => '<li class="envolver"><span class="ico-celda c-finanzas">' + icono('finanzas') + '</span><div class="crece"><b>' + h(nombre) + '</b><small>' + detalle + '</small>' +
+      '<div class="fila insignias">' + medios(id) + '</div><div class="fila insignias">' + extra + '</div></div></li>';
+    return seccion('Cobros y medios de pago', '<ul class="lista">' +
+      fila('cuota', 'Mensualidad', 'Monto según categoría · vence el día ' + S.view.config.diaVencimiento, '<button class="btn mini" data-act="editarMedios" data-concepto="cuota">Medios de pago</button>') +
+      fila('federativo', 'Federativo ' + ANIO, clp(S.view.config.montoFederativo) + ' · habilita para jugar', '<button class="btn mini" data-act="editarMedios" data-concepto="federativo">Medios de pago</button>') +
+      (S.view.cobros || []).map((c) => {
+        const aplica = js.filter((j) => C.cobroAplica(c, j));
+        const pag = aplica.filter((j) => C.cobroPagado(S.view, c.id, j.rut)).length;
+        return fila(c.id, c.nombre + (c.activo === false ? ' (pausado)' : ''), clp(c.monto) + ' · ' + (c.categorias.length ? h(cortoCats(c.categorias)) : 'Todo el club') + (c.vence ? ' · vence ' + h(fCorta(c.vence)) : '') + ' · <b>' + pag + '/' + aplica.length + '</b> pagados',
+          '<button class="btn mini primario" data-act="verCobro" data-id="' + c.id + '">Pagos</button><button class="btn mini" data-act="editarCobro" data-id="' + c.id + '">Editar</button>');
+      }).join('') + '</ul>', btnTexto('Nuevo cobro', 'nuevoCobro'), 'Activa o desactiva el link de pago y la transferencia por concepto. Los datos de transferencia se editan en Ajustes.');
+  }
+
+  function formMedios(concepto) {
+    const cfg = S.view.config;
+    const m = (cfg.medios && cfg.medios[concepto]) || { link: true, transferencia: true };
+    const campoLink = concepto === 'cuota' ? 'linkCuota' : 'linkFederativo';
+    return '<form id="form-modal">' +
+      '<div class="tarjeta lista-chequeo"><label class="celda-chequeo"><input type="checkbox" name="usarLink" value="1"' + (m.link !== false ? ' checked' : '') + '><span><b>Link de pago</b><br><small>Botón "Pagar" que abre el link</small></span></label>' +
+      '<label class="celda-chequeo"><input type="checkbox" name="usarTransferencia" value="1"' + (m.transferencia !== false ? ' checked' : '') + '><span><b>Transferencia</b><br><small>Muestra los datos de transferencia del club</small></span></label></div>' +
+      '<div style="height:12px"></div>' + campo('Link de pago', input('link', cfg[campoLink], 'type="url" placeholder="https://"')) +
+      (cfg.datosTransferencia ? '' : '<div class="aviso">Aún no hay datos de transferencia: agrégalos en Ajustes.</div>') + pie() + '</form>';
+  }
+
+  function formCobro(c) {
+    const nuevo = !c;
+    c = c || { usarTransferencia: true, categorias: [], activo: true };
+    return '<form id="form-modal">' + (nuevo ? '' : '<input type="hidden" name="id" value="' + c.id + '">') +
+      campo('Concepto', input('nombre', c.nombre, 'required maxlength="80" placeholder="Ej: Torneo Nacional, polerón, viaje"')) +
+      '<div class="campos">' + campo('Monto', input('monto', c.monto, 'type="number" min="1" required inputmode="numeric"')) + campo('Vence (opcional)', input('vence', c.vence, 'type="date"')) + '</div>' +
+      '<p class="etiqueta">Medios de pago</p><div class="tarjeta lista-chequeo"><label class="celda-chequeo"><input type="checkbox" name="usarLink" value="1"' + (c.usarLink ? ' checked' : '') + '><span>Link de pago</span></label>' +
+      '<label class="celda-chequeo"><input type="checkbox" name="usarTransferencia" value="1"' + (c.usarTransferencia ? ' checked' : '') + '><span>Transferencia</span></label></div><div style="height:12px"></div>' +
+      campo('Link de pago', input('link', c.link, 'type="url" placeholder="https://"')) +
+      '<p class="etiqueta">¿A quién se cobra? (vacío = todo el club)</p>' + chequeosCategorias('categorias', c.categorias) +
+      '<label class="celda-chequeo"><input type="checkbox" name="activo" value="1"' + (c.activo !== false ? ' checked' : '') + '><span>Cobro activo (los jugadores lo ven)</span></label>' +
+      pie(nuevo ? 'Crear cobro' : 'Guardar', nuevo ? '' : '<button type="button" class="btn peligro" data-act="borrarCobro" data-id="' + c.id + '">Eliminar</button>') + '</form>';
+  }
+
+  function vistaCobro(c) {
+    const aplica = jugadores().filter((j) => C.cobroAplica(c, j));
+    return '<p class="ayuda">' + clp(c.monto) + ' · toca para marcar o anular el pago.</p><div class="tarjeta"><ul class="lista clic">' + (aplica.map((j) => {
+      const p = S.view.pagosCobro[c.id] && S.view.pagosCobro[c.id][j.rut];
+      return '<li data-act="marcarCobro" data-id="' + c.id + '" data-rut="' + j.rut + '"><div class="crece"><b>' + h(j.nombre) + '</b><small>' + h(etiqueta(j)) + (p ? ' · ' + h(p.metodo) + ' ' + h(fCorta(p.fecha)) : '') + '</small></div>' +
+        (p && p.pagado ? insignia('Pagado', 'ok') : insignia('Pendiente', 'alerta')) + '</li>';
+    }).join('') || '<li>' + vacio('Ningún jugador activo en estas categorías.') + '</li>') + '</ul></div>';
   }
 
   // ---------- Entrenamientos ----------
@@ -630,11 +708,14 @@
     return l;
   }
 
+  const lineasCuerpoTecnico = (m) => C.CUERPO_TECNICO.filter(([k]) => m.cuerpoTecnico && m.cuerpoTecnico[k]).map(([k, etq]) => etq + ': ' + m.cuerpoTecnico[k]);
   const tituloConvocatoria = (m) => 'Fecha ' + m.categoria + (m.competicion ? ' · ' + m.competicion : '');
 
   // Mismo formato que la citación de WhatsApp del club.
   function textoConvocatoria(m) {
-    return [tituloConvocatoria(m)].concat(lineasConvocatoria(m).map(([e, t]) => e + ' ' + t), [''], nombresConvocados(m).map((c, i) => (i + 1) + '. ' + c.nombre)).join('\n');
+    const ct = lineasCuerpoTecnico(m);
+    return [tituloConvocatoria(m)].concat(lineasConvocatoria(m).map(([e, t]) => e + ' ' + t), [''], nombresConvocados(m).map((c, i) => (i + 1) + '. ' + c.nombre),
+      ct.length ? ['', '👥 Cuerpo técnico'].concat(ct) : []).join('\n');
   }
 
   function vistaConvocatoria(m) {
@@ -645,6 +726,7 @@
       '<div class="conv-cab"><img src="' + ESCUDO + '" alt=""><div><b>' + h(tituloConvocatoria(m)) + '</b><small>Vieux Gaulois Handball</small></div></div>' +
       '<ul class="conv-lineas">' + lineasConvocatoria(m).map(([e, t]) => '<li><span>' + e + '</span>' + h(t) + '</li>').join('') + '</ul>' +
       (lista.length ? '<ol class="conv-lista">' + lista.map((c) => '<li><span>' + h(c.nombre) + '</span>' + (c.estado ? estados[c.estado] : '') + (c.rut && !hab(c.rut) ? insignia('No habilitado', 'mal') : '') + '</li>').join('') + '</ol>' : vacio('Todavía no hay jugadores citados.')) +
+      (lineasCuerpoTecnico(m).length ? '<div class="conv-ct"><b>👥 Cuerpo técnico</b>' + lineasCuerpoTecnico(m).map((t) => '<span>' + h(t) + '</span>').join('') + '</div>' : '') +
       '</div>' +
       (m.citacionFecha ? '<p class="seccion-pie">Guardada el ' + h(fCorta(m.citacionFecha)) + (autor ? ' por ' + h(autor.nombre) : '') + '.</p>' : '') +
       '<div class="modal-pie columna">' +
@@ -664,6 +746,7 @@
       '<h1>' + h(tituloConvocatoria(m)) + '</h1>' +
       lineasConvocatoria(m).map(([e, t]) => '<p class="pdf-linea"><span>' + e + '</span>' + h(t) + '</p>').join('') +
       '<ol class="pdf-lista">' + lista.map((c) => '<li>' + h(c.nombre) + '</li>').join('') + '</ol>' +
+      (lineasCuerpoTecnico(m).length ? '<div class="pdf-ct"><b>👥 Cuerpo técnico</b>' + lineasCuerpoTecnico(m).map((t) => '<p>' + h(t) + '</p>').join('') + '</div>' : '') +
       '<p class="pdf-pie">Confirma tu asistencia en la app del club. Documento generado el ' + h(fLarga(HOY)) + '.</p></div>';
     const titulo = document.title;
     document.title = 'Convocatoria ' + m.categoria + ' vs ' + m.rival + ' ' + m.fecha;
@@ -728,7 +811,11 @@
       '<form id="form-modal"><input type="hidden" name="id" value="' + m.id + '">' +
       (todas ? '' : '<button type="button" class="btn-texto" data-act="citarTodas" data-id="' + m.id + '">Mostrar todas las categorías</button>') +
       '<div class="tarjeta"><ul class="lista">' + (filas || '<li>' + vacio('No hay jugadores en esta categoría.') + '</li>') + '</ul></div>' +
-      '<div class="aviso mal" id="aviso-hab" hidden></div>' + pie('Guardar convocatoria') + '</form>';
+      '<div class="aviso mal" id="aviso-hab" hidden></div>' +
+      '<p class="sub">Cuerpo técnico (opcional)</p><p class="ayuda">Completa sólo los que van; los vacíos no aparecen en la convocatoria.</p>' +
+      '<datalist id="nombres-staff">' + S.view.usuarios.filter((u) => u.rol !== 'jugador' && u.activo !== false).map((u) => '<option value="' + h(u.nombre) + '">').join('') + '</datalist>' +
+      '<div class="tarjeta"><div class="campos">' + C.CUERPO_TECNICO.map(([k, etq]) => campo(etq, input('ct_' + k, (m.cuerpoTecnico || {})[k], 'list="nombres-staff" maxlength="60" placeholder="Nombre"'))).join('') + '</div></div>' +
+      pie('Guardar convocatoria') + '</form>';
   }
 
   // ---------- Lesiones ----------
@@ -848,11 +935,9 @@
       campo('Día de vencimiento', input('diaVencimiento', cfg.diaVencimiento, 'type="number" min="1" max="28" inputmode="numeric"')) + '</div>' +
       '<p class="etiqueta">Meses que se cobran</p><div class="chequeos">' + C.MESES.map((m, i) => '<label class="chip"><input type="checkbox" name="mesesCobro[]" value="' + i + '"' + (cfg.mesesCobro.includes(i) ? ' checked' : '') + '><span>' + m + '</span></label>').join('') + '</div>' +
       '<button class="btn primario ancho">Guardar precios</button></form>', '', 'Descuentos o becas se asignan en la ficha de cada jugador.') +
-      seccion('Pagos online', '<form data-form="pagos" class="form-interno">' +
-        campo('Link de pago de cuotas', input('linkCuota', cfg.linkCuota, 'type="url" placeholder="https://"')) +
-        campo('Link de pago federativo', input('linkFederativo', cfg.linkFederativo, 'type="url" placeholder="https://"')) +
-        campo('Datos de transferencia', '<textarea name="datosTransferencia" rows="4" placeholder="Nombre, RUT, banco, tipo y N° de cuenta, email">' + h(cfg.datosTransferencia || '') + '</textarea>') +
-        '<button class="btn primario ancho">Guardar pagos</button></form>', '', 'Los jugadores ven estos botones en sus mensualidades y federativo.') +
+      seccion('Datos de transferencia', '<form data-form="pagos" class="form-interno">' +
+        campo('Cuenta del club', '<textarea name="datosTransferencia" rows="4" placeholder="Nombre, RUT, banco, tipo y N° de cuenta, email">' + h(cfg.datosTransferencia || '') + '</textarea>') +
+        '<button class="btn primario ancho">Guardar datos</button></form>', btnTexto('Links y cobros', 'tab', 'data-tab="finanzas"'), 'Los links de pago y qué medio usa cada cobro se configuran en Finanzas.') +
       seccion('Citaciones', '<form data-form="citacion" class="form-interno">' +
         campo('💳 Indicaciones por defecto', '<textarea name="indicacionesCitacion" rows="3">' + h(cfg.indicacionesCitacion || '') + '</textarea>') +
         '<button class="btn primario ancho">Guardar</button></form>') +
@@ -889,10 +974,80 @@
   }
 
   // ---------- Perfil del jugador ----------
-  function bloquePago(link, txt) {
-    const cfg = S.view.config;
-    return (link || cfg.datosTransferencia ? '<div class="pago-botones">' + (link ? linkExterno(link, txt, 'primario') : '') +
-      (cfg.datosTransferencia ? '<button class="btn" data-act="verTransferencia">Datos de transferencia</button>' : '') + '</div>' : '');
+  // ---------- Cobros y pagos ----------
+  const nombreConcepto = (c) => (c === 'cuota' ? 'Mensualidad' : c === 'federativo' ? 'Federativo' : ((S.view.cobros || []).find((x) => x.id === c) || { nombre: 'Cobro eliminado' }).nombre);
+  const informesPendientes = () => (S.view.pagosInformados || []).filter((x) => x.estado === 'pendiente').sort((a, b) => a.creado.localeCompare(b.creado));
+  const informePendiente = (concepto, mes) => (S.view.pagosInformados || []).find((x) => x.rut === S.view.yo && x.estado === 'pendiente' && x.concepto === concepto && (mes == null || x.mes === mes));
+  const ESTADO_INFORME = { pendiente: ['En revisión', 'alerta'], aprobado: ['Aprobado', 'ok'], rechazado: ['Rechazado', 'mal'] };
+
+  function itemInforme(x) {
+    const j = usuario(x.rut) || { nombre: '?' };
+    const que = nombreConcepto(x.concepto) + (x.mes != null ? ' ' + C.MESES[x.mes] + ' ' + x.anio : x.concepto === 'federativo' ? ' ' + x.anio : '');
+    const est = ESTADO_INFORME[x.estado];
+    return '<li class="envolver"><span class="ico-celda c-finanzas">' + icono('finanzas') + '</span><div class="crece">' +
+      '<b>' + (esStaff() ? h(j.nombre) + ' · ' : '') + h(que) + '</b><small>' + clp(x.monto) + ' · ' + h(x.medio) + ' · ' + h(fCorta(x.fecha)) + '</small>' +
+      (x.detalle ? '<small>' + h(x.detalle) + '</small>' : '') + (x.nota ? '<small>Directiva: ' + h(x.nota) + '</small>' : '') +
+      '<div class="fila insignias">' + insignia(est[0], est[1]) +
+      (esDir() && x.estado === 'pendiente' ? '<button class="btn mini primario" data-act="revisarPago" data-id="' + x.id + '" data-ok="1">Aprobar</button><button class="btn mini peligro" data-act="revisarPago" data-id="' + x.id + '">Rechazar</button>' : '') +
+      '</div></div></li>';
+  }
+
+  // Botones de pago según lo que la directiva activó para ese concepto, más "Informar pago".
+  function bloquePago(concepto, txt, mes) {
+    const m = C.mediosDe(S.view, concepto);
+    const informado = informePendiente(concepto, mes);
+    return '<div class="pago-botones">' + (m.link ? linkExterno(m.link, txt, 'primario') : '') +
+      (m.transferencia ? '<button class="btn" data-act="verTransferencia">Datos de transferencia</button>' : '') +
+      (informado ? '<span class="insignia alerta">Pago informado · en revisión</span>'
+        : '<button class="btn' + (m.link || m.transferencia ? ' contorno' : ' primario') + '" data-act="informarPago" data-concepto="' + h(concepto) + '"' + (mes != null ? ' data-mes="' + mes + '"' : '') + '>Ya pagué: informar pago</button>') + '</div>' +
+      (!m.link && !m.transferencia ? '<p class="seccion-pie">Paga directamente a la directiva y luego informa el pago aquí.</p>' : '');
+  }
+
+  function formInformarPago(concepto, mes) {
+    const j = yo();
+    const debe = S.view.config.mesesCobro.filter((x) => !(C.pagoMes(S.view, j.rut, ANIO, x) || {}).pagado && !informePendiente('cuota', x));
+    const ops = [];
+    if (debe.length) ops.push(['cuota', 'Mensualidad', S.view.resumen.cuota]);
+    if (!C.federativoPagado(S.view, j.rut, ANIO) && !informePendiente('federativo')) ops.push(['federativo', 'Federativo ' + ANIO, S.view.config.montoFederativo]);
+    (S.view.cobros || []).forEach((c) => { if (!C.cobroPagado(S.view, c.id, j.rut) && !informePendiente(c.id)) ops.push([c.id, c.nombre, c.monto]); });
+    if (!ops.length) return '<div class="vacio">No tienes pagos pendientes por informar. ¡Estás al día!</div>';
+    const sel = ops.some((o) => o[0] === concepto) ? concepto : ops[0][0];
+    const monto = ops.find((o) => o[0] === sel)[2];
+    const primerDebe = mes != null && debe.includes(Number(mes)) ? Number(mes) : debe[0];
+    return '<form id="form-modal"><input type="hidden" name="anio" value="' + ANIO + '">' +
+      campo('¿Qué pagaste?', '<select name="concepto" data-concepto-pago required>' + ops.map((o) => '<option value="' + h(o[0]) + '" data-monto="' + o[2] + '"' + (o[0] === sel ? ' selected' : '') + '>' + h(o[1]) + '</option>').join('') + '</select>') +
+      campo('Mes', '<select name="mes">' + debe.map((x) => '<option value="' + x + '"' + (x === primerDebe ? ' selected' : '') + '>' + C.MESES[x] + ' ' + ANIO + '</option>').join('') + '</select>', ' id="campo-mes"' + (sel === 'cuota' ? '' : ' hidden')) +
+      '<div class="campos">' + campo('Monto', input('monto', monto, 'type="number" min="1" required inputmode="numeric"')) + campo('Fecha de pago', input('fecha', HOY, 'type="date" required')) + '</div>' +
+      campo('Medio', '<select name="medio">' + opciones(['Transferencia', 'Link de pago', 'Efectivo'], 'Transferencia') + '</select>') +
+      campo('N° de operación o comentario', input('detalle', '', 'maxlength="200" placeholder="Ej: transferencia Banco Estado, op. 123456"')) +
+      '<p class="ayuda">La directiva revisa el pago y lo marca como pagado.</p>' + pie('Informar pago') + '</form>';
+  }
+
+  // ---------- Finanzas del jugador ----------
+  function vistaMisFinanzas() {
+    const j = yo();
+    const fed = C.federativoPagado(S.view, j.rut, ANIO);
+    const cobrados = S.view.config.mesesCobro;
+    const pagados = cobrados.filter((m) => estadoMes(j.rut, ANIO, m) === 'pagado').length;
+    const vencidos = cobrados.filter((m) => estadoMes(j.rut, ANIO, m) === 'vencido').length;
+    const informes = (S.view.pagosInformados || []).slice().sort((a, b) => b.creado.localeCompare(a.creado));
+    const proxMes = cobrados.find((m) => estadoMes(j.rut, ANIO, m) === 'vencido' || estadoMes(j.rut, ANIO, m) === 'pendiente');
+    const otros = S.view.cobros || [];
+    return seccion('Mensualidades ' + ANIO, '<div class="fila entre" style="margin-bottom:12px"><div><b>' + clp(S.view.resumen.cuota) + '</b> <small class="suave">al mes · vence el día ' + S.view.config.diaVencimiento + '</small></div>' + (vencidos ? insignia(vencidos + ' atrasada' + (vencidos > 1 ? 's' : ''), 'mal') : insignia('Al día', 'ok')) + '</div>' +
+        '<div class="meses">' + C.MESES.map((nom, m) => {
+          let est = estadoMes(j.rut, ANIO, m);
+          const inf = est !== 'pagado' && est !== 'no' && informePendiente('cuota', m);
+          if (inf) est = 'informado';
+          return '<div class="mes ' + est + '">' + nom + '<span>' + ({ pagado: '✓', vencido: 'Debe', pendiente: '–', no: '', informado: '⏳' }[est]) + '</span></div>';
+        }).join('') + '</div>' + (proxMes != null ? bloquePago('cuota', 'Pagar cuota', proxMes) : ''), '', pagados + ' de ' + cobrados.length + ' cuotas pagadas. ⏳ = pago informado, en revisión.') +
+      seccion('Federativo ' + ANIO, '<div class="fila entre"><div><b>' + clp(S.view.config.montoFederativo) + '</b><br><small class="suave">Necesario para jugar partidos oficiales</small></div>' + (fed ? insignia('Pagado', 'ok') : insignia('Pendiente', 'mal')) + '</div>' +
+        (fed ? '' : bloquePago('federativo', 'Pagar federativo'))) +
+      (otros.length ? seccion('Otros cobros', otros.map((c) => {
+        const pag = C.cobroPagado(S.view, c.id, j.rut);
+        return '<div class="tarjeta cobro"><div class="fila entre"><div class="crece"><b>' + h(c.nombre) + '</b><br><small class="suave">' + clp(c.monto) + (c.vence ? ' · vence el ' + h(fCorta(c.vence)) : '') + '</small></div>' +
+          (pag ? insignia('Pagado', 'ok') : insignia('Pendiente', 'alerta')) + '</div>' + (pag ? '' : bloquePago(c.id, 'Pagar')) + '</div>';
+      }).join('<div style="height:10px"></div>')) : '') +
+      seccion('Pagos que informaste', informes.length ? '<ul class="lista">' + informes.map(itemInforme).join('') + '</ul>' : vacio('Cuando pagues por transferencia o link, infórmalo aquí para que la directiva lo registre.'), btnTexto('Informar', 'informarPago'));
   }
 
   function vistaPerfil() {
@@ -901,14 +1056,11 @@
     const res = S.view.resumen;
     const a = res.asistencia;
     const fed = C.federativoPagado(S.view, j.rut, ANIO);
-    const cobrados = S.view.config.mesesCobro;
-    const pagados = cobrados.filter((m) => estadoMes(j.rut, ANIO, m) === 'pagado').length;
-    const vencidos = cobrados.filter((m) => estadoMes(j.rut, ANIO, m) === 'vencido').length;
+    const vencidos = S.view.config.mesesCobro.filter((m) => estadoMes(j.rut, ANIO, m) === 'vencido').length;
     const misPartidos = proximos(S.view.partidos);
-    const misEntr = proximos(S.view.entrenamientos).slice(0, 3);
+    const misEntr = proximos(S.view.entrenamientos).slice(0, 4);
     const les = S.view.lesiones.slice().sort((x, y) => (x.estado === y.estado ? y.fecha.localeCompare(x.fecha) : x.estado === 'activa' ? -1 : 1));
     const ent = cuentaEntrenador(j.rut);
-    const ult = avisos().slice(0, 2);
     const firmas = (S.view.documentos || []).map((d) => [d, C.firmaDe(S.view, j.rut, d)]).filter((x) => x[1]);
 
     return (ent ? '<div class="aviso info">También eres <b>' + h(ent.cargo || 'entrenador') + '</b>. Para tu perfil de entrenador sal y entra con tu usuario <b>' + h(ent.rut.replace('usr:', '')) + '</b>.</div>' : '') +
@@ -918,22 +1070,90 @@
       '<div class="datos"><div><small>Edad</small><b>' + (e == null ? '–' : e + ' años') + '</b></div><div><small>N° camiseta</small><b>' + (j.numero != null ? h(j.numero) : '–') + '</b></div>' +
       '<div><small>Posición</small><b>' + h(j.posicion || '–') + '</b></div><div><small>RUT</small><b>' + h(C.formatearRut(j.rut)) + '</b></div></div>' +
       '<button class="btn mini claro" data-act="misDatos">Editar mis datos de contacto</button></section>' +
+      (vencidos ? '<div class="aviso mal fila entre"><span>Tienes ' + vencidos + ' cuota' + (vencidos > 1 ? 's' : '') + ' atrasada' + (vencidos > 1 ? 's' : '') + '.</span><button class="btn mini" data-act="tab" data-tab="finanzas">Ver finanzas</button></div>' : '') +
 
-      (ult.length ? seccion('Avisos del club', ult.map((x) => tarjetaAviso(x, true)).join(''), btnTexto('Ver todos', 'tab', 'data-tab="avisos"')) : '') +
       seccion('Próximos partidos', misPartidos.length ? '<ul class="lista">' + misPartidos.map((m) => '<li>' + tarjetaPartido(m) + '</li>').join('') + '</ul>' : vacio('No hay partidos próximos para tu categoría.')) +
-      seccion('Lesiones y dolores', les.length ? '<ul class="lista">' + les.map(itemLesion).join('') + '</ul>' : vacio('No tienes lesiones ni dolores reportados.'), btnTexto('Reportar', 'lesionPara'), 'Lo que reportes lo ven tu entrenador y la directiva.') +
       seccion('Próximos entrenamientos', misEntr.length ? '<ul class="lista">' + misEntr.map(itemEntrenamiento).join('') + '</ul>' : vacio('Sin entrenamientos programados.'), btnTexto('Calendario', 'tab', 'data-tab="calendario"')) +
-
-      seccion('Mensualidades ' + ANIO, '<div class="fila entre" style="margin-bottom:12px"><div><b>' + clp(res.cuota) + '</b> <small class="suave">al mes · vence el día ' + S.view.config.diaVencimiento + '</small></div>' + (vencidos ? insignia(vencidos + ' atrasada' + (vencidos > 1 ? 's' : ''), 'mal') : insignia('Al día', 'ok')) + '</div>' +
-        '<div class="meses">' + C.MESES.map((nom, m) => {
-          const est = estadoMes(j.rut, ANIO, m);
-          return '<div class="mes ' + est + '">' + nom + '<span>' + ({ pagado: '✓', vencido: 'Debe', pendiente: '–', no: '' }[est]) + '</span></div>';
-        }).join('') + '</div>' + (vencidos || pagados < cobrados.length ? bloquePago(S.view.config.linkCuota, 'Pagar cuota') : ''), '', pagados + ' de ' + cobrados.length + ' cuotas pagadas.') +
-      seccion('Federativo ' + ANIO, '<div class="fila entre"><div><b>' + clp(S.view.config.montoFederativo) + '</b><br><small class="suave">Necesario para jugar partidos oficiales</small></div>' + (fed ? insignia('Pagado', 'ok') : insignia('Pendiente', 'mal')) + '</div>' +
-        (fed ? '' : bloquePago(S.view.config.linkFederativo, 'Pagar federativo'))) +
+      seccion('Lesiones y dolores', les.length ? '<ul class="lista">' + les.map(itemLesion).join('') + '</ul>' : vacio('No tienes lesiones ni dolores reportados.'), btnTexto('Reportar', 'lesionPara'), 'Lo que reportes lo ven tu entrenador y la directiva.') +
       seccion('Asistencia a entrenamientos', '<div class="fila" style="gap:16px"><div class="anillo" style="--p:' + a.porcentaje + '"><b>' + a.porcentaje + '%</b></div><div class="crece">Asististe a <b>' + a.asistidos + '</b> de <b>' + a.realizados + '</b> entrenamientos realizados' + (a.justificados ? '<br><small class="suave">' + a.justificados + ' ausencias justificadas</small>' : '') + '</div></div>') +
       (firmas.length ? seccion('Documentos firmados', '<ul class="lista">' + firmas.map(([d, f]) => '<li><span class="ico-celda c-documentos">' + icono('documentos') + '</span><div class="crece"><b>' + h(d.titulo) + '</b><small>Firmado el ' + h(fCorta(f.fecha)) + '</small></div></li>').join('') + '</ul>') : '') +
-      seccion('Convenios del club', listaConvenios(false)) + seccionCuenta();
+      seccionCuenta();
+  }
+
+  // ---------- Chat ----------
+  function hilosVisibles() {
+    const yoU = yo();
+    const hilos = {};
+    (S.view.mensajes || []).forEach((m) => { (hilos[m.hilo] = hilos[m.hilo] || []).push(m); });
+    // Conversaciones que siempre aparecen aunque estén vacías.
+    if (yoU.rol === 'jugador') { hilos['dir:' + yoU.rut] = hilos['dir:' + yoU.rut] || []; hilos['ent:' + yoU.rut] = hilos['ent:' + yoU.rut] || []; }
+    if (yoU.rol === 'entrenador') hilos['dir:' + yoU.rut] = hilos['dir:' + yoU.rut] || [];
+    if (S.hilo && !hilos[S.hilo]) hilos[S.hilo] = [];
+    return Object.keys(hilos).map((k) => ({ hilo: k, msjs: hilos[k].sort((a, b) => a.fecha.localeCompare(b.fecha)) }))
+      .sort((a, b) => (b.msjs.length ? b.msjs[b.msjs.length - 1].fecha : '').localeCompare(a.msjs.length ? a.msjs[a.msjs.length - 1].fecha : ''));
+  }
+  const noLeidos = (msjs) => msjs.filter((m) => !m.leidoPor.includes(S.view.yo)).length;
+  const chatSinLeer = () => (S.view.mensajes || []).filter((m) => !m.leidoPor.includes(S.view.yo)).length;
+
+  function tituloHilo(hilo) {
+    const [tipo, id] = [hilo.slice(0, 3), hilo.slice(4)];
+    const otro = usuario(id);
+    if (tipo === 'dir') return esDir() ? (otro ? otro.nombre : '?') : 'Directiva';
+    return rol() === 'jugador' ? 'Entrenadores' : (otro ? otro.nombre : '?');
+  }
+  function subtituloHilo(hilo) {
+    const [tipo, id] = [hilo.slice(0, 3), hilo.slice(4)];
+    const otro = usuario(id);
+    if (rol() === 'jugador') return tipo === 'dir' ? 'Cuotas, pagos, documentos y temas del club' : 'Tus entrenadores';
+    if (tipo === 'dir' && !esDir()) return 'Conversación con la directiva';
+    return otro ? (otro.rol === 'jugador' ? etiqueta(otro) : (otro.cargo || 'Entrenador')) : '';
+  }
+  const horaMsj = (iso) => {
+    const d = new Date(iso);
+    const hm = d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+    return C.hoyISO(d) === HOY ? hm : d.toLocaleDateString('es-CL', { day: 'numeric', month: 'short' }) + ' ' + hm;
+  };
+
+  function vistaChat() {
+    if (S.hilo) {
+      const msjs = (S.view.mensajes || []).filter((m) => m.hilo === S.hilo).sort((a, b) => a.fecha.localeCompare(b.fecha));
+      if (noLeidos(msjs)) setTimeout(() => { if (S.hilo) B().accion('chat.leer', { hilo: S.hilo }).then((v) => { S.view = v; render(); }).catch(() => {}); }, 300);
+      let ultimoDia = '';
+      const burbujas = msjs.map((m) => {
+        const mio = m.de === S.view.yo;
+        const autor = usuario(m.de);
+        const dia = m.fecha.slice(0, 10);
+        const fechaDia = new Date(m.fecha).toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
+        const sep = dia !== ultimoDia ? '<div class="chat-dia">' + h(fechaDia.charAt(0).toUpperCase() + fechaDia.slice(1)) + '</div>' : '';
+        ultimoDia = dia;
+        return sep + '<div class="burbuja' + (mio ? ' mia' : '') + '">' + (!mio ? '<b>' + h(autor ? autor.nombre : '?') + (autor && autor.rol !== 'jugador' ? ' · ' + h(autor.cargo || autor.rol) : '') + '</b>' : '') +
+          '<p>' + h(m.texto).replace(/\n/g, '<br>') + '</p><small>' + h(horaMsj(m.fecha)) + '</small></div>';
+      }).join('');
+      return '<p class="intro">' + h(subtituloHilo(S.hilo)) + '</p>' +
+        '<div class="chat" id="chat-msjs">' + (burbujas || vacio('Escribe el primer mensaje.')) + '</div>' +
+        '<form id="form-chat" class="chat-caja"><textarea id="chat-texto" name="texto" rows="1" maxlength="1000" placeholder="Escribe un mensaje" required>' + h(S.borrador[S.hilo] || '') + '</textarea>' +
+        '<button class="btn-enviar" aria-label="Enviar">' + icono('enviar') + '</button></form>';
+    }
+    const hilos = hilosVisibles();
+    const intro = rol() === 'jugador' ? 'Escríbele directo a la directiva o a tus entrenadores.' : esDir() ? 'Conversaciones de jugadores y entrenadores con la directiva.' : 'Conversaciones con tus jugadores y con la directiva.';
+    return '<p class="intro">' + intro + '</p>' + seccion('', hilos.length ? '<ul class="lista clic">' + hilos.map(({ hilo, msjs }) => {
+      const ult = msjs[msjs.length - 1];
+      const n = noLeidos(msjs);
+      const tit = tituloHilo(hilo);
+      const ini = hilo.startsWith('dir:') && !esDir() ? 'VG' : tit.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+      return '<li data-act="abrirHilo" data-hilo="' + h(hilo) + '"><span class="avatar-chat' + (hilo.startsWith('dir:') ? ' dir' : '') + '">' + h(ini) + '</span><div class="crece"><b>' + h(tit) + '</b>' +
+        '<small>' + (ult ? (ult.de === S.view.yo ? 'Tú: ' : '') + h(ult.texto.slice(0, 80)) : h(subtituloHilo(hilo))) + '</small></div>' +
+        '<div class="chat-meta">' + (ult ? '<small>' + h(horaMsj(ult.fecha)) + '</small>' : '') + (n ? '<i class="punto">' + n + '</i>' : '') + '</div></li>';
+    }).join('') + '</ul>' : vacio('Aún no hay conversaciones.'));
+  }
+
+  function formNuevoChat() {
+    const js = jugadores();
+    const ops = esDir()
+      ? '<optgroup label="Entrenadores">' + S.view.usuarios.filter((u) => u.rol === 'entrenador' && u.activo !== false).map((u) => '<option value="dir:' + h(u.rut) + '">' + h(u.nombre) + '</option>').join('') + '</optgroup>' +
+        '<optgroup label="Jugadores">' + js.map((j) => '<option value="dir:' + h(j.rut) + '">' + h(j.nombre) + ' · ' + h(j.categoria) + '</option>').join('') + '</optgroup>'
+      : '<option value="dir:' + h(S.view.yo) + '">Directiva</option><optgroup label="Jugadores">' + js.map((j) => '<option value="ent:' + h(j.rut) + '">' + h(j.nombre) + ' · ' + h(j.categoria) + '</option>').join('') + '</optgroup>';
+    return '<form id="form-modal">' + campo('¿Con quién?', '<select name="hilo" required>' + ops + '</select>') + pie('Abrir conversación') + '</form>';
   }
 
   function formMisDatos(j) {
@@ -944,10 +1164,231 @@
       '<p class="ayuda">Nombre, categoría y número de camiseta los actualiza el entrenador o la directiva.</p>' + pie() + '</form>';
   }
 
+  // ---------- Pizarra táctica y jugadas ----------
+  // La cancha mide 40 x 20 m; atacamos hacia el arco de la derecha (x = 40).
+  const VISTA_CANCHA = { completa: '-1.4 -1.2 42.8 22.4', media: '18.6 -1.2 22.8 22.4' };
+  const HERRAMIENTAS = [['mover', 'Mover', 'mover'], ['mov', 'Desplazamiento', 'movimiento'], ['pase', 'Pase', 'pase'], ['lanz', 'Lanzamiento', 'lanzamiento'], ['libre', 'Lápiz', 'lapiz'], ['goma', 'Borrar', 'goma']];
+  const pizNueva = () => ({ pasos: [{ fichas: C.formacionInicial(), trazos: [] }], i: 0, herr: 'mover', cancha: 'media', jugadaId: null, nombre: '', descripcion: '', categorias: [], historial: [], soloVer: false, cambios: false });
+
+  function svgCancha(cancha) {
+    const area = (r) => 'M40 ' + (8.5 - r) + ' A' + r + ' ' + r + ' 0 0 0 ' + (40 - r) + ' 8.5 L' + (40 - r) + ' 11.5 A' + r + ' ' + r + ' 0 0 0 40 ' + (11.5 + r);
+    const areaIzq = (r) => 'M0 ' + (8.5 - r) + ' A' + r + ' ' + r + ' 0 0 1 ' + r + ' 8.5 L' + r + ' 11.5 A' + r + ' ' + r + ' 0 0 1 0 ' + (11.5 + r);
+    const flecha = (id, color) => '<marker id="' + id + '" viewBox="0 0 10 10" refX="7" refY="5" markerUnits="userSpaceOnUse" markerWidth="1.3" markerHeight="1.3" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="' + color + '"/></marker>';
+    return '<svg class="cancha" id="cancha" viewBox="' + VISTA_CANCHA[cancha] + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Pizarra táctica">' +
+      '<defs><clipPath id="clip-cancha"><rect x="0" y="0" width="40" height="20"/></clipPath>' + flecha('fl-mov', '#FFD34D') + flecha('fl-pase', '#FFFFFF') + flecha('fl-lanz', '#FF5A4E') + '</defs>' +
+      '<rect class="c-fuera" x="-2" y="-2" width="44" height="24"/><rect class="c-piso" x="0" y="0" width="40" height="20"/>' +
+      '<image href="' + ESCUDO + '" x="17.2" y="7" width="5.6" height="6" opacity=".14"/>' +
+      '<g clip-path="url(#clip-cancha)"><path class="c-area" d="' + area(6) + 'Z"/><path class="c-area" d="' + areaIzq(6) + 'Z"/>' +
+      '<path class="c-9m" d="' + area(9) + '"/><path class="c-9m" d="' + areaIzq(9) + '"/></g>' +
+      '<g class="c-lineas"><rect x="0" y="0" width="40" height="20"/><path d="M20 0V20M33 9.5V10.5M7 9.5V10.5M36 9.85V10.15M4 9.85V10.15"/><path d="' + area(6) + '"/><path d="' + areaIzq(6) + '"/>' +
+      '<circle cx="20" cy="10" r=".25" fill="#fff"/></g><g class="c-arcos"><rect x="40" y="8.5" width="1" height="3"/><rect x="-1" y="8.5" width="1" height="3"/></g>' +
+      '<g class="trazos"></g><g class="temp"></g><g class="fichas"></g></svg>';
+  }
+
+  function svgTrazo(t, i) {
+    const d = 'M' + t.p.map((q) => q[0] + ' ' + q[1]).join(' L');
+    const fin = t.t === 'libre' ? '' : ' marker-end="url(#fl-' + t.t + ')"';
+    return '<g data-trazo="' + i + '"><path class="hit" d="' + d + '"/><path class="t-' + t.t + '" d="' + d + '"' + fin + '/></g>';
+  }
+  function svgFicha(f) {
+    return '<g class="ficha f-' + f.t + '" data-id="' + h(f.id) + '" transform="translate(' + f.x + ' ' + f.y + ')"><circle r="' + (f.t === 'b' ? 0.45 : 0.85) + '"/>' +
+      (f.n ? '<text>' + h(f.n) + '</text>' : '') + '</g>';
+  }
+
+  // Calcula el paso siguiente: quien tiene un desplazamiento llega a su destino y el balón sigue al pase o lanzamiento.
+  function siguientePaso(paso) {
+    const fichas = paso.fichas.map((f) => Object.assign({}, f));
+    const balon = fichas.find((f) => f.t === 'b');
+    const cerca = (p) => {
+      let mejor = null, dist = 1.6;
+      fichas.forEach((f) => { const d = Math.hypot(f.x - p[0], f.y - p[1]); if (f.t !== 'b' && d < dist) { dist = d; mejor = f; } });
+      return mejor;
+    };
+    let hayPase = false;
+    const movidos = [];
+    paso.trazos.forEach((t) => {
+      const ini = t.p[0], fin = t.p[t.p.length - 1];
+      if (t.t === 'mov') { const f = cerca(ini); if (f) { movidos.push([f.x, f.y, fin[0] - f.x, fin[1] - f.y]); f.x = fin[0]; f.y = fin[1]; } }
+      if ((t.t === 'pase' || t.t === 'lanz') && balon) { hayPase = true; balon.x = fin[0]; balon.y = fin[1]; }
+    });
+    // Sin pase, el balón acompaña al jugador que lo lleva.
+    if (balon && !hayPase) {
+      const m = movidos.find(([x, y]) => Math.hypot(balon.x - x, balon.y - y) < 1.4);
+      if (m) { balon.x = Math.round((balon.x + m[2]) * 100) / 100; balon.y = Math.round((balon.y + m[3]) * 100) / 100; }
+    }
+    return { fichas, trazos: [] };
+  }
+
+  const Pizarra = {
+    svg: null, arrastre: null, trazo: null,
+    paso() { return S.piz.pasos[S.piz.i]; },
+    montar() {
+      const svg = $('#cancha');
+      if (!svg || !S.piz) return;
+      this.svg = svg;
+      this.dibujar(this.paso());
+      if (S.piz.soloVer || S.piz.reproduciendo) return;
+      svg.addEventListener('pointerdown', (e) => this.bajar(e));
+      svg.addEventListener('pointermove', (e) => this.mover(e));
+      svg.addEventListener('pointerup', (e) => this.subir(e));
+      svg.addEventListener('pointercancel', (e) => this.subir(e));
+      svg.addEventListener('dblclick', (e) => this.renombrar(e));
+    },
+    dibujar(paso) {
+      if (!this.svg) return;
+      this.svg.querySelector('.trazos').innerHTML = paso.trazos.map(svgTrazo).join('');
+      this.svg.querySelector('.fichas').innerHTML = paso.fichas.slice().sort((a, b) => (a.t === 'b') - (b.t === 'b')).map(svgFicha).join('');
+    },
+    punto(e) {
+      const pt = this.svg.createSVGPoint();
+      pt.x = e.clientX; pt.y = e.clientY;
+      const q = pt.matrixTransform(this.svg.getScreenCTM().inverse());
+      return [Math.round(Math.min(41, Math.max(-1, q.x)) * 100) / 100, Math.round(Math.min(20.8, Math.max(-0.8, q.y)) * 100) / 100];
+    },
+    historial() {
+      S.piz.historial.push(JSON.stringify({ pasos: S.piz.pasos, i: S.piz.i }));
+      if (S.piz.historial.length > 40) S.piz.historial.shift();
+      S.piz.cambios = true;
+    },
+    bajar(e) {
+      const p = this.punto(e), herr = S.piz.herr, paso = this.paso();
+      const fichaEl = e.target.closest('.ficha');
+      if (herr === 'goma') {
+        const tr = e.target.closest('[data-trazo]');
+        if (tr) { this.historial(); paso.trazos.splice(Number(tr.dataset.trazo), 1); this.dibujar(paso); }
+        else if (fichaEl) { this.historial(); paso.fichas = paso.fichas.filter((f) => f.id !== fichaEl.dataset.id); this.dibujar(paso); }
+        return;
+      }
+      if (herr === 'mover') {
+        if (!fichaEl) return;
+        const f = paso.fichas.find((x) => x.id === fichaEl.dataset.id);
+        this.historial();
+        this.arrastre = { f, el: fichaEl, dx: f.x - p[0], dy: f.y - p[1] };
+      } else {
+        // Las flechas parten desde el centro de la ficha tocada.
+        const f = fichaEl && paso.fichas.find((x) => x.id === fichaEl.dataset.id);
+        this.trazo = { t: herr, p: [f ? [f.x, f.y] : p] };
+      }
+      this.svg.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    },
+    mover(e) {
+      if (!this.arrastre && !this.trazo) return;
+      const p = this.punto(e);
+      if (this.arrastre) {
+        const a = this.arrastre;
+        a.f.x = Math.round((p[0] + a.dx) * 100) / 100; a.f.y = Math.round((p[1] + a.dy) * 100) / 100;
+        a.el.setAttribute('transform', 'translate(' + a.f.x + ' ' + a.f.y + ')');
+        return;
+      }
+      const t = this.trazo;
+      if (t.t === 'libre') { const u = t.p[t.p.length - 1]; if (Math.hypot(u[0] - p[0], u[1] - p[1]) > 0.3) t.p.push(p); } else t.p[1] = p;
+      this.svg.querySelector('.temp').innerHTML = t.p.length > 1 ? svgTrazo(t, -1) : '';
+    },
+    subir() {
+      if (this.arrastre) { this.arrastre = null; this.dibujar(this.paso()); }
+      if (this.trazo) {
+        const t = this.trazo;
+        this.trazo = null;
+        this.svg.querySelector('.temp').innerHTML = '';
+        const largo = t.p.length > 1 ? Math.hypot(t.p[t.p.length - 1][0] - t.p[0][0], t.p[t.p.length - 1][1] - t.p[0][1]) : 0;
+        if (largo > 0.6 || (t.t === 'libre' && t.p.length > 3)) { this.historial(); this.paso().trazos.push(t); this.dibujar(this.paso()); }
+      }
+    },
+    renombrar(e) {
+      const el = e.target.closest('.ficha');
+      if (!el || S.piz.herr !== 'mover') return;
+      const f = this.paso().fichas.find((x) => x.id === el.dataset.id);
+      if (f.t === 'b') return;
+      const n = prompt('Número o sigla (hasta 3 caracteres):', f.n);
+      if (n == null) return;
+      this.historial();
+      // El nombre se cambia en todos los pasos para que la ficha sea la misma.
+      S.piz.pasos.forEach((ps) => ps.fichas.forEach((x) => { if (x.id === f.id) x.n = n.trim().slice(0, 3); }));
+      this.dibujar(this.paso());
+    },
+    // Animación entre pasos: las fichas se deslizan y se ven las flechas del paso que se está ejecutando.
+    animar() {
+      const P = S.piz, dur = 1100, pausa = 450;
+      let k = 0, t0 = null;
+      const suave = (u) => (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2);
+      const tick = (ts) => {
+        if (S.piz !== P || !P.reproduciendo || !this.svg || !document.body.contains(this.svg)) return;
+        if (t0 == null) t0 = ts;
+        const a = P.pasos[k], b = P.pasos[k + 1];
+        const u = suave(Math.min(1, (ts - t0) / dur));
+        const fichas = b.fichas.map((fb) => { const fa = a.fichas.find((x) => x.id === fb.id) || fb; return Object.assign({}, fb, { x: fa.x + (fb.x - fa.x) * u, y: fa.y + (fb.y - fa.y) * u }); });
+        this.dibujar({ fichas, trazos: a.trazos });
+        if (ts - t0 >= dur + pausa) {
+          k++; t0 = ts;
+          if (k >= P.pasos.length - 1) { P.reproduciendo = false; P.i = P.pasos.length - 1; render(); return; }
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    },
+  };
+
+  function barraPasos(P) {
+    return '<div class="piz-pasos">' + P.pasos.map((_, i) => '<button class="paso-chip' + (i === P.i ? ' activo' : '') + '" data-act="pizPaso" data-i="' + i + '"' + (P.reproduciendo ? ' disabled' : '') + '>' + (i + 1) + '</button>').join('') +
+      (P.soloVer ? '' : '<button class="paso-chip mas" data-act="pizNuevoPaso" title="Nuevo paso"' + (P.reproduciendo ? ' disabled' : '') + '>+ Paso</button>') +
+      '<span class="crece"></span>' +
+      (P.pasos.length > 1 ? (P.reproduciendo ? '<button class="btn mini primario" data-act="pizDetener">■ Detener</button>' : '<button class="btn mini primario" data-act="pizReproducir">' + icono('play') + ' Reproducir</button>') : '') + '</div>';
+  }
+
+  function vistaPizarra() {
+    if (!S.piz || S.piz.soloVer) S.piz = pizNueva();
+    const P = S.piz;
+    const jugadas = (S.view.jugadas || []).slice().sort((a, b) => b.fecha.localeCompare(a.fecha));
+    const herr = HERRAMIENTAS.map(([id, nom, ico]) => '<button class="herr' + (P.herr === id ? ' activa' : '') + '" data-act="pizHerr" data-h="' + id + '" title="' + nom + '" aria-label="' + nom + '"' + (P.reproduciendo ? ' disabled' : '') + '>' + icono(ico) + '<span>' + nom + '</span></button>').join('');
+    return '<div class="piz-cab"><div class="crece"><b>' + h(P.nombre || 'Jugada sin guardar') + '</b><small>' + (P.jugadaId ? 'Guardada' + (P.cambios ? ' · con cambios sin guardar' : '') : 'Pizarra libre: dibuja y guarda como jugada') + '</small></div>' +
+      '<button class="btn mini" data-act="pizNueva">Nueva</button><button class="btn mini primario" data-act="pizGuardar">' + icono('guardar') + ' Guardar</button></div>' +
+      '<div class="filtros">' + segmentado('cancha', P.cancha, [['media', 'Media cancha'], ['completa', 'Cancha completa']]) + '</div>' +
+      '<div class="piz-herr">' + herr + '</div>' +
+      '<div class="cancha-caja">' + svgCancha(P.cancha) + '</div>' +
+      barraPasos(P) +
+      '<div class="piz-acciones"><button class="btn mini" data-act="pizAgregar" data-t="a"><i class="punto-f f-a"></i> Atacante</button><button class="btn mini" data-act="pizAgregar" data-t="d"><i class="punto-f f-d"></i> Defensor</button>' +
+      '<button class="btn mini" data-act="pizAgregar" data-t="b"><i class="punto-f f-b"></i> Balón</button><span class="crece"></span>' +
+      '<button class="btn mini" data-act="pizDeshacer"' + (P.historial.length ? '' : ' disabled') + '>' + icono('deshacer') + ' Deshacer</button><button class="btn mini" data-act="pizLimpiar">Borrar flechas</button>' +
+      (P.pasos.length > 1 ? '<button class="btn mini peligro" data-act="pizBorrarPaso">Quitar paso</button>' : '') + '</div>' +
+      '<p class="seccion-pie piz-ayuda"><b>Mover</b> arrastra las fichas (doble toque para cambiar el número). <b>Desplazamiento</b>, <b>pase</b> y <b>lanzamiento</b> dibujan flechas desde una ficha. Con <b>+ Paso</b> los jugadores avanzan a donde apuntan sus flechas y el balón sigue al pase: así se arma la jugada paso a paso.</p>' +
+      seccion('Jugadas del club', jugadas.length ? '<ul class="lista clic">' + jugadas.map((j) => {
+        const autor = usuario(j.autor);
+        return '<li data-act="abrirJugada" data-id="' + j.id + '"><span class="ico-celda c-partidos">' + icono('jugadas') + '</span><div class="crece"><b>' + h(j.nombre) + '</b>' +
+          '<small>' + j.pasos.length + ' pasos · ' + (j.categorias.length ? 'compartida con ' + h(cortoCats(j.categorias)) : 'sólo cuerpo técnico') + (autor ? ' · ' + h(autor.nombre) : '') + '</small></div>' +
+          ((esDir() || j.autor === S.view.yo) ? '<button class="btn-icono" data-act="borrarJugada" data-id="' + j.id + '" aria-label="Eliminar">' + icono('basura') + '</button>' : '') + '</li>';
+      }).join('') + '</ul>' : vacio('Aún no hay jugadas guardadas.'), '', 'Las jugadas compartidas con una categoría las ven esos jugadores en su app.');
+  }
+
+  function vistaJugadas() {
+    if (S.piz && S.piz.soloVer) {
+      const P = S.piz;
+      return '<div class="piz-cab"><button class="btn-icono atras" data-act="cerrarJugada" aria-label="Volver">' + icono('atras') + '</button><div class="crece"><b>' + h(P.nombre) + '</b><small>Paso ' + (P.i + 1) + ' de ' + P.pasos.length + '</small></div></div>' +
+        (P.descripcion ? '<p class="intro">' + h(P.descripcion) + '</p>' : '') +
+        '<div class="cancha-caja">' + svgCancha(P.cancha) + '</div>' + barraPasos(P) +
+        '<p class="seccion-pie piz-ayuda"><span class="ley mov"></span> desplazamiento · <span class="ley pase"></span> pase · <span class="ley lanz"></span> lanzamiento</p>';
+    }
+    const js = S.view.jugadas || [];
+    return '<p class="intro">Jugadas que tu cuerpo técnico compartió con tu categoría.</p>' + seccion('', js.length ? '<ul class="lista clic">' + js.map((j) => '<li data-act="abrirJugada" data-id="' + j.id + '"><span class="ico-celda c-partidos">' + icono('jugadas') + '</span><div class="crece"><b>' + h(j.nombre) + '</b><small>' + j.pasos.length + ' pasos' + (j.descripcion ? ' · ' + h(j.descripcion.slice(0, 70)) : '') + '</small></div><span class="chevron">' + icono('flecha') + '</span></li>').join('') + '</ul>' : vacio('Todavía no hay jugadas compartidas.'));
+  }
+
+  function formJugada() {
+    const P = S.piz;
+    return '<form id="form-modal">' + campo('Nombre de la jugada', input('nombre', P.nombre, 'required maxlength="80" placeholder="Ej: Cruce central - lateral"')) +
+      campo('Descripción (opcional)', '<textarea name="descripcion" maxlength="500" placeholder="Qué busca la jugada, señal para iniciarla...">' + h(P.descripcion) + '</textarea>') +
+      '<p class="etiqueta">Compartir con los jugadores de (opcional)</p>' + chequeosCategorias('categorias', P.categorias) +
+      '<p class="ayuda">Sin categorías, la jugada la ve sólo el cuerpo técnico.</p>' + pie(P.jugadaId ? 'Guardar cambios' : 'Guardar jugada') + '</form>';
+  }
+
+  function cargarJugada(j, soloVer) {
+    S.piz = { pasos: C.clone(j.pasos), i: 0, herr: 'mover', cancha: j.cancha || 'media', jugadaId: j.id, nombre: j.nombre, descripcion: j.descripcion || '', categorias: (j.categorias || []).slice(), historial: [], soloVer, cambios: false };
+  }
+
   // ---------- Render ----------
   const VISTAS = {
-    inicio: vistaInicio, avisos: vistaAvisos, jugadores: vistaJugadores, finanzas: vistaFinanzas, entrenamientos: vistaEntrenamientos, partidos: vistaPartidos,
-    lesiones: vistaLesiones, documentos: vistaDocumentos, convenios: vistaConvenios, ajustes: vistaAjustes, calendario: vistaCalendario, perfil: vistaPerfil, mas: vistaMas,
+    inicio: vistaInicio, avisos: vistaAvisos, jugadores: vistaJugadores, finanzas: () => (esDir() ? vistaFinanzas() : vistaMisFinanzas()), entrenamientos: vistaEntrenamientos, partidos: vistaPartidos,
+    lesiones: vistaLesiones, documentos: vistaDocumentos, convenios: () => (esDir() ? vistaConvenios() : seccion('', listaConvenios(false))), ajustes: vistaAjustes, calendario: vistaCalendario, perfil: vistaPerfil, mas: vistaMas,
+    chat: vistaChat, pizarra: vistaPizarra, jugadas: vistaJugadas,
   };
 
   function render() {
@@ -964,10 +1405,20 @@
     if (!permitidas().includes(S.tab)) S.tab = TABS[rol()].barra[0];
     if (S.tab === 'avisos') guardarLS('vg_av_' + S.view.yo, JSON.stringify(avisos().map((a) => a.id)));
     const enfocado = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.cambio;
+    const chatEnfocado = document.activeElement && document.activeElement.id === 'chat-texto';
     const y = window.scrollY;
     app.innerHTML = shell(VISTAS[S.tab]());
     window.scrollTo(0, y);
     if (enfocado === 'busqueda') { const i = $('[data-cambio="busqueda"]'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+    if (chatEnfocado && $('#chat-texto')) { const t = $('#chat-texto'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+    if (S.tab === 'pizarra' || (S.tab === 'jugadas' && S.piz)) Pizarra.montar();
+  }
+
+  function irAlFinalChat() {
+    const c = $('#chat-msjs');
+    if (c) window.scrollTo(0, document.body.scrollHeight);
+    const t = $('#chat-texto');
+    if (t && window.matchMedia('(min-width: 721px)').matches) t.focus();
   }
 
   function enviarConError(promesa) {
@@ -978,10 +1429,11 @@
 
   // ---------- Acciones de botones ----------
   const ACCIONES = {
-    tab: (d) => { cerrarModal(); S.tab = d.tab; S.verPasados = false; render(); window.scrollTo(0, 0); },
+    tab: (d) => { cerrarModal(); S.tab = d.tab; S.verPasados = false; S.hilo = null; render(); window.scrollTo(0, 0); },
     segmento: (d) => {
       if (d.nombre === 'anioFin') S.anioFin = Number(d.valor);
       if (d.nombre === 'verPasados') S.verPasados = d.valor === '1';
+      if (d.nombre === 'cancha' && S.piz) S.piz.cancha = d.valor;
       render();
     },
     cerrarModal,
@@ -1002,7 +1454,7 @@
       const u = yo();
       abrirModal('Mi cuenta', '<div class="ficha-cab"><div class="avatar grande">' + h(u.nombre.split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase()) + '</div><div class="crece"><b>' + h(u.nombre) + '</b><small>' + h(u.cargo || u.rol) + '</small><small>' + h(u.usuario ? 'Usuario: ' + u.usuario : C.formatearRut(u.rut)) + '</small></div></div>' + seccionCuenta());
     },
-    salir: async () => { cerrarModal(); await B().salir(); S.view = null; S.tab = null; render(); },
+    salir: async () => { cerrarModal(); await B().salir(); S.view = null; S.tab = null; S.hilo = null; S.piz = null; S.borrador = {}; render(); },
     rellenarDemo: (d) => {
       const f = $('#form-login');
       f.rut.value = d.usuario; f.clave.value = d.clave;
@@ -1069,8 +1521,88 @@
     (o) => accion('movimiento.crear', o, 'Movimiento registrado')),
     borrarMovimiento: (d) => { if (confirm('¿Eliminar este movimiento?')) accion('movimiento.eliminar', { id: d.id }); },
     verTransferencia: () => abrirModal('Datos de transferencia', '<div class="tarjeta transferencia">' + h(S.view.config.datosTransferencia).replace(/\n/g, '<br>') + '</div>' +
-      '<p class="ayuda">Envía el comprobante a la directiva para que registre tu pago.</p><div class="modal-pie columna"><button class="btn primario ancho" data-act="copiarTransferencia">' + icono('copiar') + ' Copiar datos</button></div>'),
+      '<p class="ayuda">Después de transferir, toca "Ya pagué: informar pago" para que la directiva lo registre.</p><div class="modal-pie columna"><button class="btn primario ancho" data-act="copiarTransferencia">' + icono('copiar') + ' Copiar datos</button></div>'),
     copiarTransferencia: () => copiar(S.view.config.datosTransferencia),
+    informarPago: (d) => abrirModal('Informar un pago', formInformarPago(d.concepto, d.mes), (o) => accion('pago.informar', Object.assign(o, { anio: ANIO, mes: o.concepto === 'cuota' ? Number(o.mes) : null }), 'Pago informado: la directiva lo revisará')),
+    revisarPago: (d) => {
+      if (d.ok) { accion('pago.revisar', { id: d.id, aprobar: true }, 'Pago aprobado y registrado'); return; }
+      const nota = prompt('Motivo del rechazo (lo verá el jugador):', 'No encontramos el pago');
+      if (nota != null) accion('pago.revisar', { id: d.id, aprobar: false, nota }, 'Pago rechazado');
+    },
+    editarMedios: (d) => abrirModal('Medios de pago · ' + nombreConcepto(d.concepto), formMedios(d.concepto), (o) => accion('config.guardar', {
+      medios: { [d.concepto]: { link: !!o.usarLink, transferencia: !!o.usarTransferencia } }, [d.concepto === 'cuota' ? 'linkCuota' : 'linkFederativo']: o.link,
+    }, 'Medios de pago guardados')),
+    nuevoCobro: () => abrirModal('Nuevo cobro', formCobro(), (o) => accion('cobro.guardar', Object.assign(o, { usarLink: !!o.usarLink, usarTransferencia: !!o.usarTransferencia, activo: !!o.activo }), 'Cobro creado: los jugadores ya lo ven')),
+    editarCobro: (d) => abrirModal('Editar cobro', formCobro(S.view.cobros.find((c) => c.id === d.id)), (o) => accion('cobro.guardar', Object.assign(o, { usarLink: !!o.usarLink, usarTransferencia: !!o.usarTransferencia, activo: !!o.activo }), 'Cobro guardado')),
+    borrarCobro: (d) => { if (confirm('¿Eliminar este cobro y sus pagos registrados?')) enviarConError(accion('cobro.eliminar', { id: d.id }, 'Cobro eliminado')); },
+    verCobro: (d) => { const c = S.view.cobros.find((x) => x.id === d.id); abrirModal(c.nombre, vistaCobro(c)); },
+    marcarCobro: async (d) => {
+      const pagado = C.cobroPagado(S.view, d.id, d.rut);
+      if (pagado && !confirm('¿Anular este pago?')) return;
+      const ok = await accion('cobro.marcar', { id: d.id, rut: d.rut, pagado: !pagado }, pagado ? 'Pago anulado' : 'Pago registrado');
+      if (ok) { const c = S.view.cobros.find((x) => x.id === d.id); abrirModal(c.nombre, vistaCobro(c)); }
+    },
+
+    // Pizarra y jugadas
+    pizHerr: (d) => { S.piz.herr = d.h; render(); },
+    pizPaso: (d) => { S.piz.i = Number(d.i); render(); },
+    pizNuevoPaso: () => {
+      Pizarra.historial();
+      if (S.piz.pasos.length >= 30) { toast('Máximo 30 pasos por jugada', 'error'); return; }
+      S.piz.pasos.splice(S.piz.i + 1, 0, siguientePaso(Pizarra.paso()));
+      S.piz.i++;
+      render();
+    },
+    pizBorrarPaso: () => { Pizarra.historial(); S.piz.pasos.splice(S.piz.i, 1); S.piz.i = Math.max(0, S.piz.i - 1); render(); },
+    pizDeshacer: () => {
+      const ant = S.piz.historial.pop();
+      if (!ant) return;
+      const o = JSON.parse(ant);
+      S.piz.pasos = o.pasos; S.piz.i = Math.min(o.i, o.pasos.length - 1);
+      render();
+    },
+    pizLimpiar: () => { if (!Pizarra.paso().trazos.length) return; Pizarra.historial(); Pizarra.paso().trazos = []; render(); },
+    pizAgregar: (d) => {
+      const paso = Pizarra.paso();
+      if (d.t === 'b' && paso.fichas.some((f) => f.t === 'b')) { toast('Ya hay un balón en la cancha'); return; }
+      if (paso.fichas.length >= 20) { toast('Máximo 20 fichas', 'error'); return; }
+      Pizarra.historial();
+      const n = d.t === 'a' ? String(paso.fichas.filter((f) => f.t === 'a').length + 1) : d.t === 'd' ? String(paso.fichas.filter((f) => f.t === 'd').length + 1) : '';
+      const f = { id: C.uid().slice(-6), t: d.t, n, x: S.piz.cancha === 'media' ? 30 : 20, y: 10 + (paso.fichas.length % 5) - 2 };
+      // La ficha nueva aparece desde este paso en adelante.
+      S.piz.pasos.slice(S.piz.i).forEach((ps) => ps.fichas.push(Object.assign({}, f)));
+      render();
+    },
+    pizReproducir: () => { S.piz.reproduciendo = true; S.piz.i = 0; render(); Pizarra.animar(); },
+    pizDetener: () => { S.piz.reproduciendo = false; render(); },
+    pizNueva: () => { if (S.piz.cambios && !confirm('¿Empezar una pizarra nueva? Se pierden los cambios sin guardar.')) return; S.piz = pizNueva(); render(); },
+    pizGuardar: () => abrirModal(S.piz.jugadaId ? 'Guardar jugada' : 'Nueva jugada', formJugada(), async (o) => {
+      const P = S.piz;
+      const ok = await accion('jugada.guardar', { id: P.jugadaId || undefined, nombre: o.nombre, descripcion: o.descripcion, categorias: o.categorias || [], cancha: P.cancha, pasos: P.pasos }, 'Jugada guardada');
+      if (ok) {
+        if (!P.jugadaId) { const j = S.view.jugadas.filter((x) => x.nombre === o.nombre.trim() && x.autor === S.view.yo).pop(); if (j) P.jugadaId = j.id; }
+        Object.assign(P, { nombre: o.nombre.trim(), descripcion: o.descripcion || '', categorias: o.categorias || [], cambios: false });
+        render();
+      }
+      return ok;
+    }),
+    abrirJugada: (d) => {
+      const j = S.view.jugadas.find((x) => x.id === d.id);
+      if (esStaff() && S.piz && S.piz.cambios && S.piz.jugadaId !== j.id && !confirm('¿Abrir esta jugada? Se pierden los cambios sin guardar de la pizarra.')) return;
+      cargarJugada(j, !esStaff());
+      render(); window.scrollTo(0, 0);
+    },
+    cerrarJugada: () => { S.piz = null; render(); },
+    borrarJugada: (d) => {
+      if (!confirm('¿Eliminar esta jugada?')) return;
+      enviarConError(accion('jugada.eliminar', { id: d.id }, 'Jugada eliminada'));
+      if (S.piz && S.piz.jugadaId === d.id) S.piz = pizNueva();
+    },
+
+    // Chat
+    abrirHilo: (d) => { S.hilo = d.hilo; render(); irAlFinalChat(); },
+    cerrarHilo: () => { S.hilo = null; render(); window.scrollTo(0, 0); },
+    nuevoChat: () => abrirModal('Nuevo mensaje', formNuevoChat(), (o) => { S.tab = 'chat'; S.hilo = o.hilo; cerrarModal(); render(); irAlFinalChat(); return false; }),
 
     // Entrenamientos
     nuevoEntrenamiento: () => abrirModal('Programar entrenamiento', formEntrenamiento(), (o) => accion('entrenamiento.guardar', o, 'Entrenamiento programado')),
@@ -1151,7 +1683,9 @@
     abrirModal('Citar jugadores', formCitacion(m, todas), async (o) => {
       const noHab = (o.ruts || []).filter((r) => !hab(r));
       if (noHab.length && !confirm(noHab.map((r) => usuario(r).nombre).join(', ') + (noHab.length > 1 ? ' no están habilitados' : ' no está habilitado') + ' (federativo pendiente). ¿Citar igual?')) return false;
-      const ok = await accion('citacion.guardar', { id: m.id, ruts: o.ruts || [] }, 'Convocatoria guardada: ' + (o.ruts || []).length + ' jugadores');
+      const cuerpoTecnico = {};
+      C.CUERPO_TECNICO.forEach(([k]) => { cuerpoTecnico[k] = o['ct_' + k] || ''; });
+      const ok = await accion('citacion.guardar', { id: m.id, ruts: o.ruts || [], cuerpoTecnico }, 'Convocatoria guardada: ' + (o.ruts || []).length + ' jugadores');
       if (ok) abrirModal('Convocatoria', vistaConvocatoria(partido(m.id)));
       return false;
     });
@@ -1174,6 +1708,11 @@
     const k = ev.target.dataset && ev.target.dataset.cambio;
     if (k === 'filtroCat') { S.filtroCat = ev.target.value; guardarLS('vg_cat', S.filtroCat); render(); }
     else if (k === 'verInactivos') { S.verInactivos = ev.target.checked; render(); }
+    if (ev.target.hasAttribute && ev.target.hasAttribute('data-concepto-pago')) {
+      const op = ev.target.selectedOptions[0];
+      $('#campo-mes').hidden = ev.target.value !== 'cuota';
+      ev.target.form.monto.value = op.dataset.monto;
+    }
     if (ev.target.hasAttribute && ev.target.hasAttribute('data-categoria')) {
       const c = $('#campo-anio');
       if (c) c.hidden = !C.llevaAnio(ev.target.value);
@@ -1185,7 +1724,16 @@
     }
   });
 
+  document.addEventListener('keydown', (ev) => {
+    // En el computador, Enter envía el mensaje y Shift+Enter hace un salto de línea.
+    if (ev.target.id === 'chat-texto' && ev.key === 'Enter' && !ev.shiftKey && window.matchMedia('(min-width: 721px)').matches) {
+      ev.preventDefault();
+      ev.target.form.requestSubmit();
+    }
+  });
+
   document.addEventListener('input', (ev) => {
+    if (ev.target.id === 'chat-texto') S.borrador[S.hilo] = ev.target.value;
     if (ev.target.dataset && ev.target.dataset.cambio === 'busqueda') { S.busqueda = ev.target.value; render(); }
     if (ev.target.id === 'login-rut' || (ev.target.name === 'rut' && ev.target.form && ev.target.form.getAttribute('id') === 'form-modal' && ev.target.type !== 'hidden')) {
       // En el login también se escriben usuarios: sólo se da formato si parte con un número.
@@ -1218,6 +1766,13 @@
       } catch (e) { $('#form-error').textContent = e.message; }
       return;
     }
+    if (idForm === 'form-chat') {
+      const t = f.texto.value.trim();
+      if (!t) return;
+      const ok = await accion('chat.enviar', { hilo: S.hilo, texto: t });
+      if (ok) { delete S.borrador[S.hilo]; render(); irAlFinalChat(); }
+      return;
+    }
     if (idForm === 'form-modal' && alEnviar) {
       const btn = f.querySelector('.modal-pie .primario');
       if (btn) btn.disabled = true;
@@ -1235,7 +1790,7 @@
       S.view.config.categoriasBase.forEach((b) => { cuotas[b] = o['cuota_' + b]; });
       accion('config.guardar', { cuotas, montoFederativo: o.montoFederativo, diaVencimiento: o.diaVencimiento, mesesCobro: o.mesesCobro }, 'Precios guardados');
     }
-    if (f.dataset.form === 'pagos') accion('config.guardar', { linkCuota: o.linkCuota, linkFederativo: o.linkFederativo, datosTransferencia: o.datosTransferencia }, 'Datos de pago guardados');
+    if (f.dataset.form === 'pagos') accion('config.guardar', { datosTransferencia: o.datosTransferencia }, 'Datos de transferencia guardados');
     if (f.dataset.form === 'citacion') accion('config.guardar', { indicacionesCitacion: o.indicacionesCitacion }, 'Indicaciones guardadas');
     if (f.dataset.form === 'categorias') {
       accion('config.guardar', { categoriasBase: o.categoriasBase.split('\n').map((s) => s.trim()).filter(Boolean), cuotas: {} }, 'Categorías guardadas');
@@ -1257,6 +1812,19 @@
     try { S.view = await B().estado(); } catch (e) { S.view = null; }
     render();
   }
+
+  // Con servidor, se buscan mensajes y cambios nuevos cada 15 segundos (sin interrumpir si hay una hoja abierta).
+  setInterval(async () => {
+    if (S.modo !== 'servidor' || !S.view || !$('#modal').hidden || document.visibilityState !== 'visible' || (S.piz && S.piz.reproduciendo)) return;
+    try {
+      const v = await B().estado();
+      if (v && JSON.stringify(v) !== JSON.stringify(S.view)) {
+        const abajo = window.innerHeight + window.scrollY >= document.body.scrollHeight - 80;
+        S.view = v; render();
+        if (S.hilo && abajo) window.scrollTo(0, document.body.scrollHeight);
+      }
+    } catch (e) { /* sin conexión: se reintenta */ }
+  }, 15000);
 
   iniciar();
 })();

@@ -21,7 +21,10 @@ App de gestión del club con tres accesos: **Directiva**, **Entrenadores** y **J
 |---|:-:|:-:|:-:|
 | Ver su perfil (nombre, edad, categoría, N° camiseta, posición) | | | ✓ |
 | Reportar lesiones o dolores (le llegan a entrenador y directiva) | ✓ | ✓ | ✓ |
-| Ver sus mensualidades del año (pagadas o no) y el federativo | | | ✓ |
+| Finanzas propias: mensualidades, federativo y otros cobros; informar un pago | | | ✓ |
+| Chat directo con la directiva y con los entrenadores | ✓ | ✓ | ✓ |
+| Pizarra táctica y creador de jugadas | ✓ | ✓ | |
+| Ver las jugadas compartidas con su categoría | | | ✓ |
 | Ver entrenamientos realizados y a cuántos asistió | | | ✓ |
 | Ver convenios del club y calendario de partidos | ✓ | ✓ | ✓ |
 | Confirmar o rechazar una citación | | | ✓ |
@@ -29,7 +32,8 @@ App de gestión del club con tres accesos: **Directiva**, **Entrenadores** y **J
 | Programar entrenamientos y marcar asistencia | ✓ | ✓ | |
 | Crear partidos y citar jugadores | ✓ | ✓ | |
 | Ver quién está **habilitado** (federativo pagado) | ✓ | ✓ | |
-| Finanzas: precios de cuotas, pagos mensuales, federativo, ingresos y gastos | ✓ | | |
+| Finanzas: precios de cuotas, pagos mensuales, federativo, otros cobros, ingresos y gastos | ✓ | | |
+| Activar link de pago o transferencia por concepto; aprobar pagos informados | ✓ | | |
 | Convenios, categorías, cuentas de directiva y entrenadores, dar de baja | ✓ | | |
 
 Un jugador está **habilitado para jugar** cuando su federativo del año está pagado.
@@ -40,15 +44,31 @@ Al citar a un jugador no habilitado, la app avisa al entrenador.
 - **Categorías:** Mini, Infantil, Cadete, Juvenil, Junior, Adultos B, Primer Equipo y Master,
   cada una en rama Masculina y Femenina. En Infantil, Cadete y Juvenil se indica si el jugador
   es de 1er o 2do año. La cuota se fija por categoría (igual para ambas ramas).
-- **Pagos online:** la directiva pone en Ajustes el link de pago de cuotas, el link del
-  federativo y los datos de transferencia. El jugador ve los botones "Pagar cuota",
-  "Pagar federativo" y "Datos de transferencia" en su perfil.
+- **Cobros y medios de pago:** en Finanzas la directiva decide, para cada concepto
+  (mensualidad, federativo u otros cobros como torneos, indumentaria o viajes), si se paga con
+  link de pago, con transferencia o con ambos. Los otros cobros pueden ser para todo el club o
+  para algunas categorías. Los datos de transferencia del club se escriben en Ajustes.
+- **Informar un pago:** en su pestaña Finanzas el jugador ve sólo los botones que la directiva
+  activó y, después de pagar, toca "Ya pagué: informar pago" (monto, fecha, medio y N° de
+  operación). La directiva lo aprueba (queda registrado como pagado) o lo rechaza con un motivo.
+- **Perfil del jugador:** arriba su ficha, luego próximos partidos y próximos entrenamientos,
+  lesiones y asistencia. Las finanzas, los avisos y los convenios tienen su propia pestaña.
+- **Mensajes:** chat directo de cada jugador con la directiva y con sus entrenadores, y de cada
+  entrenador con la directiva. Cada uno ve sólo sus conversaciones. Con servidor, los mensajes
+  nuevos aparecen solos cada 15 segundos.
+- **Pizarra táctica:** cancha de balonmano (media o completa) con atacantes, defensores y balón
+  que se arrastran; flechas de desplazamiento, pase y lanzamiento, y lápiz libre.
+- **Jugadas:** con "+ Paso" cada jugador avanza hasta donde apunta su flecha y el balón sigue al
+  pase; la jugada se reproduce animada, se guarda con nombre y se puede compartir con una o
+  más categorías, cuyos jugadores la ven en su app.
 - **Avisos:** directiva y entrenadores publican avisos para todo el club (partidos de otras
   categorías, cambios de horario, etc.). Todos los ven; la directiva puede fijarlos arriba.
 - **Convocatorias:** al citar jugadores la convocatoria queda guardada en el partido, con
   rival, hora, fecha, calcetas, lugar e indicaciones, en el mismo formato que la citación de
   WhatsApp. Se puede descargar en PDF (opción "Guardar como PDF" del diálogo de impresión),
   copiar el texto para WhatsApp o compartirla. Los jugadores confirman con "Voy" o "No puedo".
+  Quien cita puede agregar el cuerpo técnico (Entrenador A, B y C, kinesiólogo/a y
+  enfermero/a); sólo aparecen en la convocatoria los cargos con nombre.
 - **Consentimiento informado:** la primera vez que un jugador entra debe firmar que su salud es
   compatible con el deporte y que se compromete a asistir y a pagar sus cuotas. Los menores de
   edad firman con su apoderado. Si la directiva cambia el texto puede pedir una nueva firma.
